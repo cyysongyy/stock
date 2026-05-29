@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>台股投資 Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#111318;--card:#1c1f2b;--card2:#252836;--card3:#2d3145;
+  /* 台股規格修正：上漲/獲利為紅(red)，下跌/虧損為綠(green) */
+  --red:#ff4757;--green:#00d68f;--amber:#f5a623;--blue:#4d9eff;--purple:#a78bfa;
+  --text:#f0f2f8;--sub:#7a86a0;--border:#2a2f45;
+  --red-dim:#ff475722;--green-dim:#00d68f22;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;max-width:480px;margin:0 auto}
+
+/* Setup */
+#setup-screen{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;align-items:center;justify-content:center;padding:24px}
+.setup-box{background:var(--card);border-radius:20px;padding:32px 22px;width:100%;border:1px solid var(--border);text-align:center}
+.setup-logo{font-size:52px;margin-bottom:12px}
+.setup-box h1{font-size:22px;font-weight:800;margin-bottom:6px}
+.setup-box p{font-size:12px;color:var(--sub);margin-bottom:24px;line-height:1.7}
+.setup-box input{width:100%;background:var(--card2);border:1.5px solid var(--border);border-radius:12px;padding:13px;color:var(--text);font-size:16px;outline:none;margin-bottom:12px;text-align:center}
+.setup-box input:focus{border-color:var(--blue)}
+.setup-btn{width:100%;background:var(--blue);border:none;border-radius:12px;padding:14px;color:#fff;font-size:16px;font-weight:700;cursor:pointer}
+.setup-note{font-size:10px;color:var(--sub);margin-top:14px;line-height:1.6}
+
+/* Top bar */
+.top-bar{background:var(--card);border-bottom:1px solid var(--border);padding:0 14px;display:flex;align-items:center;gap:8px;height:50px;position:sticky;top:0;z-index:100}
+.user-badge{display:flex;align-items:center;gap:7px;cursor:pointer}
+.user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff}
+.user-name{font-size:13px;font-weight:600;max-width:65px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-title{flex:1;text-align:center;font-size:14px;font-weight:700;color:var(--blue)}
+.monitor-pill{display:flex;align-items:center;gap:5px;border-radius:20px;padding:5px 11px;cursor:pointer;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card2)}
+.monitor-pill.on{background:var(--red-dim);border-color:var(--red)44;color:var(--red)}
+.monitor-pill.off{color:var(--sub)}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--red);animation:pulse 1.2s ease-in-out infinite}
+.pulse.off{background:var(--sub);animation:none
