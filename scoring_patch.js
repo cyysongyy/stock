@@ -494,8 +494,7 @@ async function renderTechAnalysis() {
 /* ================================================
    9. fetchTWSEPrices 覆蓋
       策略：
-      1. Yahoo Finance v6 quote API（即時報價，與 Yahoo 頁面一致）
-         批次查詢，速度快
+      1. Yahoo Finance v8 chart API（讀 meta.regularMarketPrice，即時成交價）
       2. TWSE MIS + proxy（補齊主動型ETF等 Yahoo 沒有的代碼）
       失敗時保留舊快取，不清空
    ================================================ */
@@ -504,32 +503,31 @@ async function fetchTWSEPrices(codes) {
   const prices = {};
   const today = new Date().toLocaleDateString('zh-TW');
 
-  /* ── 方法1: Yahoo Finance v6 quote API（即時報價）── */
-  async function _yahooQuote(codeList) {
-    // 分批查詢（每批最多 10 個）
-    for (let i = 0; i < codeList.length; i += 10) {
-      const batch = codeList.slice(i, i + 10);
-      const symbols = batch.map(c => c + '.TW').join(',');
-      const url = `https://query1.finance.yahoo.com/v6/finance/quote?symbols=${encodeURIComponent(symbols)}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChangePercent,longName,shortName`;
+  /* ── 方法1: Yahoo Finance v8 chart API（讀 meta.regularMarketPrice）── */
+  // v8 chart 的 meta 欄位包含即時成交價，已確認 proxy 可用
+  async function _yahooLivePrice(code) {
+    const suffixes = ['.TW', '.TWO'];
+    for (const suf of suffixes) {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suf}?interval=1d&range=2d`;
       const data = await _yFetch(url);
-      const quotes = data?.quoteResponse?.result || [];
-      quotes.forEach(q => {
-        const code = (q.symbol || '').replace('.TW','').replace('.TWO','');
-        const price = q.regularMarketPrice || null;
-        const prev  = q.regularMarketPreviousClose || null;
-        const chgPct = q.regularMarketChangePercent != null
-          ? +q.regularMarketChangePercent.toFixed(2) : null;
-        if (price) prices[code] = {
-          price: +price.toFixed(2),
-          chgPct,
-          name: q.longName || q.shortName || code,
-          date: today
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      const meta = result.meta || {};
+      const price = meta.regularMarketPrice || meta.previousClose || null;
+      const prev  = meta.chartPreviousClose || meta.previousClose || null;
+      if (price) {
+        prices[code] = {
+          price:   +price.toFixed(2),
+          chgPct:  prev ? +((price - prev) / prev * 100).toFixed(2) : null,
+          name:    meta.symbol || code,
+          date:    today
         };
-      });
+        return;
+      }
     }
   }
 
-  await _yahooQuote(codes);
+  await Promise.all(codes.map(c => _yahooLivePrice(c)));
 
   /* ── 方法2: TWSE MIS（補齊 Yahoo 沒有的代碼，如主動型ETF）── */
   const miss = codes.filter(c => !prices[c]);
@@ -581,24 +579,6 @@ async function fetchTWSEPrices(codes) {
 
 async function renderAnalysis()        { await renderTechAnalysis(); }
 async function renderScores()          { await renderTechAnalysis(); }
-async function renderPortfolioScores() { await renderTechAnalysis(); }
-
-(function () {
-  function patch() {
-    if (typeof window.switchTab !== 'function') return false;
-    const orig = window.switchTab;
-    window.switchTab = function (tab) {
-      orig.call(this, tab);
-      if (tab === 'analysis' || tab === 'scores') setTimeout(() => renderTechAnalysis(), 80);
-    };
-    return true;
-  }
-  if (!patch()) {
-    window.addEventListener('DOMContentLoaded', patch);
-    window.addEventListener('load', patch);
-  }
-})();
-rTechAnalysis(); }
 async function renderPortfolioScores() { await renderTechAnalysis(); }
 
 (function () {
