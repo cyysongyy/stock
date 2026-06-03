@@ -35,7 +35,6 @@
    ════════════════════════════════════════════════ */
 
 async function _yFetch(url) {
-  // 直接 fetch + allorigins fallback
   const tries = [
     u => u,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -63,14 +62,10 @@ async function _yFetch(url) {
 const _HIST_KEY = c => `tw_hist_v3_${c}`;
 const _HIST_TTL = 4 * 3600 * 1000;
 
-/** 判斷股票市場（.TW 或 .TWO） */
 function _yahooSuffix(code) {
-  // ETF 通常以 00 開頭或 6碼 → .TW
-  // 上櫃股通常 6xxx, 7xxx 4碼 → 先試 .TW，再試 .TWO
-  return '.TW';  // 先統一試 .TW，失敗時 fallback 到 .TWO
+  return '.TW';
 }
 
-/** Yahoo Finance chart API → OHLCV 陣列 */
 async function _yahooOHLCV(code) {
   const suffixes = ['.TW', '.TWO'];
   for (const suf of suffixes) {
@@ -154,11 +149,8 @@ async function fetchETFNav() {
   if (!data || !Array.isArray(data.data)) return {};
 
   const fields = data.fields || [];
-  // 欄位：證券代號, 證券名稱, 殖利率, 股利年度, 本益比, 股價淨值比, 財報年/季
-  // BWIBBU 實際欄位視版本而定，嘗試多種對應
   const codeIdx = fields.findIndex(f => /代號/.test(f));
   const pbIdx   = fields.findIndex(f => /淨值比/.test(f));
-  // 另外嘗試抓「溢折價率」欄位 (ETF 專屬)
   const premIdx = fields.findIndex(f => /溢折/.test(f));
 
   const nav = {};
@@ -181,7 +173,7 @@ async function fetchETFNav() {
 
 let _taiexCache = null;
 let _taiexTs = 0;
-const _TAIEX_TTL = 10 * 60 * 1000;  // 10分鐘
+const _TAIEX_TTL = 10 * 60 * 1000;
 
 async function fetchTAIEX() {
   if (_taiexCache && Date.now() - _taiexTs < _TAIEX_TTL) return _taiexCache;
@@ -190,7 +182,6 @@ async function fetchTAIEX() {
   const msg = data?.msgArray?.[0];
   if (!msg) return null;
 
-  // z=現價, y=昨收, o=開盤
   const cur  = parseFloat(msg.z || msg.tv || 0);
   const prev = parseFloat(msg.y || 0);
   const chg  = prev > 0 ? (cur - prev) / prev * 100 : 0;
@@ -207,7 +198,6 @@ async function fetchTAIEX() {
 async function scoreBuySignal(holding, taiex, navMap) {
   const code = holding.code;
 
-  // 現價資訊（從 tw_price_cache）
   let curPrice = null, prevClose = null, chgPct = null;
   try {
     const pc = JSON.parse(localStorage.getItem('tw_price_cache') || '{}');
@@ -220,7 +210,6 @@ async function scoreBuySignal(holding, taiex, navMap) {
     }
   } catch(e) {}
 
-  // 歷史 K 線
   const candles = await fetchHistory(code);
   const hasHistory = candles.length >= 20;
 
@@ -228,19 +217,15 @@ async function scoreBuySignal(holding, taiex, navMap) {
   const ma20 = hasHistory ? _calcMA(candles, 20) : null;
   const close = candles.length > 0 ? candles[candles.length - 1].close : (curPrice || 0);
 
-  // 條件 4：ETF 溢折價
   const navInfo = navMap[code] || null;
   let premiumPct = navInfo?.premium ?? null;
-  // 若無溢折價欄位，用 PB 比 1 估算
   if (premiumPct === null && navInfo?.pb != null)
     premiumPct = (navInfo.pb - 1) * 100;
 
-  // ── 逐條計分 ──
   const items = [];
 
-  // 1. K < 20
   const cond1 = hasHistory && kd.k < 20;
-  const cond1p = hasHistory && kd.k < 30;  // 部分分
+  const cond1p = hasHistory && kd.k < 30;
   items.push({
     label: 'K < 20（超賣）',
     score: cond1 ? 20 : (cond1p ? 10 : 0),
@@ -249,7 +234,6 @@ async function scoreBuySignal(holding, taiex, navMap) {
     met: cond1,
   });
 
-  // 2. 低於月線 (MA20)
   const cond2 = hasHistory && ma20 !== null && close < ma20;
   items.push({
     label: '低於月線(MA20)',
@@ -259,7 +243,6 @@ async function scoreBuySignal(holding, taiex, navMap) {
     met: cond2,
   });
 
-  // 3. 當日跌 3%+
   const cond3 = chgPct !== null && chgPct <= -3;
   const cond3p = chgPct !== null && chgPct <= -1.5;
   items.push({
@@ -270,7 +253,6 @@ async function scoreBuySignal(holding, taiex, navMap) {
     met: cond3,
   });
 
-  // 4. 接近淨值 / 折價 (ETF 溢價 <= 0.5%)
   const isETF = /ETF|etf|00[0-9]{2}/.test(holding.name || '') || /^00/.test(code);
   const cond4 = isETF && premiumPct !== null && premiumPct <= 0.5;
   const cond4p = isETF && premiumPct !== null && premiumPct <= 2;
@@ -284,7 +266,6 @@ async function scoreBuySignal(holding, taiex, navMap) {
     met: !isETF ? false : cond4,
   });
 
-  // 5. 指數當日跌 1%+
   const cond5 = taiex !== null && taiex.chgPct <= -1;
   const cond5p = taiex !== null && taiex.chgPct <= -0.5;
   items.push({
@@ -313,7 +294,6 @@ function _verdict(score, metCount) {
   return                    { text: '⏸️ 尚未到位',    color: '#666' };
 }
 
-// 排名顏色：1-2綠、3-5黃、6+紅
 function _rankColor(rank) {
   if (rank <= 2) return { dot: '#4caf50', label: '🟢 值得買入', cacheColor: 'green' };
   if (rank <= 5) return { dot: '#ffc107', label: '🟡 考慮買入', cacheColor: 'yellow' };
@@ -376,7 +356,6 @@ function _card(holding, result, rank) {
    ════════════════════════════════════════════════ */
 
 async function renderTechAnalysis() {
-  // 找容器 — index.html 用 #analysis-content
   let wrap = document.getElementById('analysis-content')
           || document.getElementById('analysis-wrap')
           || document.getElementById('analysis')
@@ -388,7 +367,6 @@ async function renderTechAnalysis() {
   }
   if (!wrap) return;
 
-  // 讀持股
   let holdings = [];
   try {
     holdings = JSON.parse(localStorage.getItem('tw_holdings') || localStorage.getItem('holdings') || '[]');
@@ -403,15 +381,13 @@ async function renderTechAnalysis() {
     正在抓取 K 線與指數資料…
   </div>`;
 
-  // 並行抓指數 + ETF淨值
   const [taiex, navMap] = await Promise.all([fetchTAIEX(), fetchETFNav()]);
 
-  // 依序評分（避免 Yahoo Finance rate limit）
   const results = [];
   for (const h of holdings) {
     const r = await scoreBuySignal(h, taiex, navMap);
     results.push({ holding: h, result: r });
-    await new Promise(res => setTimeout(res, 300));  // 稍微延遲避免限速
+    await new Promise(res => setTimeout(res, 300));
   }
 
   results.sort((a, b) => b.result.total - a.result.total);
@@ -451,14 +427,12 @@ async function renderTechAnalysis() {
       </div>
     </div>`;
 
-  // 依排名分三組 + 寫回 scoreCache（同步首頁訊號點）
   const groups = [
     { label: '🟢 值得買入（第 1–2 名）', color: '#4caf50', items: results.slice(0, 2) },
     { label: '🟡 考慮買入（第 3–5 名）', color: '#ffc107', items: results.slice(2, 5) },
     { label: '🔴 暫不考慮（第 6 名以後）', color: '#ff4757', items: results.slice(5) },
   ];
 
-  // 寫回 scoreCache 讓首頁訊號點同步
   results.forEach(({ holding, result }, idx) => {
     const rank = idx + 1;
     const rc = _rankColor(rank);
@@ -487,24 +461,17 @@ async function renderTechAnalysis() {
   </div>`;
 
   wrap.innerHTML = html;
-  // 刷新首頁持股列表的訊號點
   if (typeof renderPortfolio === 'function') setTimeout(() => renderPortfolio(), 100);
 }
 
 /* ================================================
    9. fetchTWSEPrices 覆蓋
-      策略：
-      1. Yahoo Finance v8 chart API（讀 meta.regularMarketPrice，即時成交價）
-      2. TWSE MIS + proxy（補齊主動型ETF等 Yahoo 沒有的代碼）
-      失敗時保留舊快取，不清空
    ================================================ */
 
 async function fetchTWSEPrices(codes) {
   const prices = {};
   const today = new Date().toLocaleDateString('zh-TW');
 
-  /* ── 方法1: Yahoo Finance v8 chart API（讀 meta.regularMarketPrice）── */
-  // v8 chart 的 meta 欄位包含即時成交價，已確認 proxy 可用
   async function _yahooLivePrice(code) {
     const suffixes = ['.TW', '.TWO'];
     for (const suf of suffixes) {
@@ -529,7 +496,6 @@ async function fetchTWSEPrices(codes) {
 
   await Promise.all(codes.map(c => _yahooLivePrice(c)));
 
-  /* ── 方法2: TWSE MIS（補齊 Yahoo 沒有的代碼，如主動型ETF）── */
   const miss = codes.filter(c => !prices[c]);
   if (miss.length) {
     async function _mis(list, mkt) {
@@ -561,7 +527,6 @@ async function fetchTWSEPrices(codes) {
     if (still.length) await _mis(still, 'otc');
   }
 
-  /* ── 成功才合併寫入 localStorage，失敗保留舊快取 ── */
   if (Object.keys(prices).length > 0) {
     try {
       const old = JSON.parse(localStorage.getItem('tw_price_cache') || '{}');
@@ -595,4 +560,102 @@ async function renderPortfolioScores() { await renderTechAnalysis(); }
     window.addEventListener('DOMContentLoaded', patch);
     window.addEventListener('load', patch);
   }
+})();
+
+/* ================================================
+   11. 持股列表 — 自動補中文股票名稱
+       從 TWSE 抓中文名，注入 .hr-sname
+   ================================================ */
+
+const _NAME_CACHE_KEY = 'tw_stock_names';
+
+async function _fetchStockNames(codes) {
+  const names = {};
+
+  async function _tryMIS(list, mkt) {
+    const exch = list.map(c => `${mkt}_${c}.tw`).join('|');
+    const base  = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(exch)}&json=1&delay=0`;
+    for (const url of [base,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+      `https://corsproxy.io/?${encodeURIComponent(base)}`]) {
+      try {
+        const r = await Promise.race([
+          fetch(url, { cache: 'no-store' }),
+          new Promise((_, j) => setTimeout(() => j(new Error('to')), 6000))
+        ]);
+        if (!r.ok) continue;
+        const txt = await r.text();
+        if (!txt || txt[0] === '<') continue;
+        const j = JSON.parse(txt);
+        (j.msgArray || []).forEach(s => { if (s.n) names[s.c] = s.n; });
+        return;
+      } catch(e) {}
+    }
+  }
+
+  await _tryMIS(codes, 'tse');
+  const miss = codes.filter(c => !names[c]);
+  if (miss.length) await _tryMIS(miss, 'otc');
+
+  if (Object.keys(names).length > 0) {
+    try {
+      const old = JSON.parse(localStorage.getItem(_NAME_CACHE_KEY) || '{}');
+      localStorage.setItem(_NAME_CACHE_KEY, JSON.stringify({ ...old, ...names }));
+    } catch(e) {}
+  }
+  return names;
+}
+
+function _injectPortfolioNames() {
+  let nameCache = {};
+  try { nameCache = JSON.parse(localStorage.getItem(_NAME_CACHE_KEY) || '{}'); } catch(e) {}
+
+  try {
+    const pc = JSON.parse(localStorage.getItem('tw_price_cache') || '{}');
+    Object.entries(pc).forEach(([c, v]) => {
+      if (v.name && !/\.\w+$/.test(v.name) && !nameCache[c]) nameCache[c] = v.name;
+    });
+  } catch(e) {}
+
+  document.querySelectorAll('.holding-row').forEach(row => {
+    const codeEl  = row.querySelector('.hr-code');
+    const snameEl = row.querySelector('.hr-sname');
+    if (!codeEl || !snameEl) return;
+    const code = codeEl.textContent.trim();
+    const name = nameCache[code];
+    if (!name) return;
+    snameEl.textContent = name;
+    snameEl.style.cssText += ';color:#90caf9!important;font-size:11px!important';
+  });
+}
+
+(function _patchPortfolioNames() {
+  const _origRP = window.renderPortfolio;
+  if (typeof _origRP === 'function') {
+    window.renderPortfolio = async function(...args) {
+      const r = await _origRP.apply(this, args);
+      setTimeout(_injectPortfolioNames, 60);
+      try {
+        const holdings = JSON.parse(localStorage.getItem('tw_holdings') || '[]');
+        const codes = holdings
+          .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
+          .filter(Boolean);
+        if (codes.length) _fetchStockNames(codes).then(_injectPortfolioNames);
+      } catch(e) {}
+      return r;
+    };
+  }
+
+  window.addEventListener('load', () => setTimeout(async () => {
+    try {
+      const holdings = JSON.parse(localStorage.getItem('tw_holdings') || '[]');
+      const codes = holdings
+        .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
+        .filter(Boolean);
+      if (codes.length) {
+        await _fetchStockNames(codes);
+        _injectPortfolioNames();
+      }
+    } catch(e) {}
+  }, 2000));
 })();
