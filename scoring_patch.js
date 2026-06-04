@@ -706,6 +706,112 @@ function _injectPortfolioNames() {
   }, 2000));
 })();
 
+/* ================================================
+   12. 目標價 Bar 顏色修正
+       若目標賣出價 < 平均成本 → 紅色 bar + 負百分比
+       支援 .target-strip/.ts-fill（detail panel）
+       及 .tp-bar-fill（holding row 行內 bar）
+   ================================================ */
+
+function _patchTargetBars() {
+  let holdingMap = {};
+  try {
+    JSON.parse(localStorage.getItem('tw_holdings') || '[]')
+      .forEach(h => { holdingMap[h.code] = h; });
+  } catch(e) {}
+
+  // ── 情境 A：detail-panel 內的 .target-strip ──
+  document.querySelectorAll('.detail-panel').forEach(panel => {
+    const row = panel.previousElementSibling;
+    if (!row || !row.classList.contains('holding-row')) return;
+    const codeEl = row.querySelector('.hr-code');
+    if (!codeEl) return;
+    const h = holdingMap[codeEl.textContent.trim()];
+    if (!h) return;
+
+    const target = parseFloat(h.target) || 0;
+    const cost   = parseFloat(h.cost)   || 0;
+    if (!target || !cost || target >= cost) return;  // 只處理 target < cost
+
+    const strip = panel.querySelector('.target-strip');
+    if (!strip) return;
+
+    const lossPct = ((target - cost) / cost * 100).toFixed(1);
+    const fillPct = Math.min(100, Math.abs(parseFloat(lossPct)));
+
+    const fill   = strip.querySelector('.ts-fill');
+    const labels = strip.querySelector('.ts-labels');
+
+    if (fill) {
+      fill.style.cssText += ';background:linear-gradient(90deg,#ff4757,#ff8800)!important;width:' + fillPct + '%';
+    }
+    if (labels) {
+      labels.textContent = lossPct + '% 低於成本';
+      labels.style.color = '#ff4757';
+    }
+  });
+
+  // ── 情境 B：holding-row 內的 .tp-bar-wrap（行內 bar）──
+  document.querySelectorAll('.tp-bar-wrap').forEach(wrap => {
+    // 向上找 holding-row
+    let el = wrap;
+    while (el && !el.classList.contains('holding-row')) el = el.parentElement;
+    if (!el) return;
+    const codeEl = el.querySelector('.hr-code');
+    if (!codeEl) return;
+    const h = holdingMap[codeEl.textContent.trim()];
+    if (!h) return;
+
+    const target = parseFloat(h.target) || 0;
+    const cost   = parseFloat(h.cost)   || 0;
+    if (!target || !cost || target >= cost) return;
+
+    const lossPct = ((target - cost) / cost * 100).toFixed(1);
+    const fillPct = Math.min(100, Math.abs(parseFloat(lossPct)));
+
+    const fill   = wrap.querySelector('.tp-bar-fill');
+    const label  = wrap.querySelector('.tp-bar-row');
+
+    if (fill) {
+      fill.classList.remove('target');
+      fill.classList.add('stop');
+      fill.style.width = fillPct + '%';
+    }
+    if (label) {
+      // 更新文字：把原本 "X% → price" 改為 "-Y% 低於成本 → price"
+      const orig = label.textContent.trim();
+      const arrow = orig.indexOf('→');
+      const priceStr = arrow >= 0 ? orig.slice(arrow) : '';
+      label.innerHTML = `<span style="color:#ff4757">${lossPct}% 低於成本</span>`
+                       + (priceStr ? ` <span style="color:#aaa">${priceStr}</span>` : '');
+    }
+  });
+}
+
+// 每次 renderPortfolio 後自動補丁（已在 Section 11 攔截中加入）
+// 另外監聽 detail-panel 展開（class 變化）
+(function _watchTargetBars() {
+  // MutationObserver：監聽 detail-panel 的 class 或 style 變化
+  const obs = new MutationObserver(() => { try { _patchTargetBars(); } catch(e) {} });
+  function _startObs() {
+    document.querySelectorAll('.detail-panel').forEach(p => {
+      obs.observe(p, { attributes: true, attributeFilter: ['class', 'style'] });
+    });
+  }
+  window.addEventListener('load', () => {
+    setTimeout(_startObs, 2500);
+    setTimeout(_patchTargetBars, 2600);
+  });
+  // 也在 renderPortfolio 後掛接（補到 _patchPortfolioNames 已有的攔截裡）
+  const _origInject = window._injectPortfolioNames;
+  if (typeof _origInject === 'function') {
+    window._injectPortfolioNames = function() {
+      _origInject.apply(this, arguments);
+      setTimeout(_patchTargetBars, 80);
+    };
+  }
+})();
+
 /* ── fetchLiveAndRender 供 Section 0 調用 ── */
 async function fetchLiveAndRender() {
   try {
