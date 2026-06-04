@@ -812,6 +812,55 @@ function _patchTargetBars() {
   }
 })();
 
+/* ================================================
+   13. 目標報酬率 ↔ 目標賣出價 雙向換算
+       公式: 目標賣出價 = 平均成本 × (目標報酬率% / 100)
+       例: 成本=20, 報酬率=200% → 目標賣出價 = 20×2 = 40
+       反推: 目標賣出價=40, 成本=20 → 報酬率 = 40/20×100 = 200%
+   ================================================ */
+
+(function _patchTargetPctCalc() {
+  let _bound = false;
+
+  function _bind() {
+    if (_bound) return;
+    const pctEl   = document.getElementById('m-target-pct');
+    const priceEl = document.getElementById('m-target');
+    const costEl  = document.getElementById('m-cost');
+    if (!pctEl || !priceEl || !costEl) return;
+
+    _bound = true;
+
+    // 報酬率 → 目標賣出價
+    pctEl.addEventListener('input', () => {
+      const rate = parseFloat(pctEl.value);
+      const cost = parseFloat(costEl.value);
+      if (!isNaN(rate) && rate > 0 && !isNaN(cost) && cost > 0) {
+        priceEl.value = (cost * rate / 100).toFixed(2);
+        priceEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+
+    // 目標賣出價 → 報酬率（反推）
+    priceEl.addEventListener('input', () => {
+      const price = parseFloat(priceEl.value);
+      const cost  = parseFloat(costEl.value);
+      if (!isNaN(price) && price > 0 && !isNaN(cost) && cost > 0) {
+        pctEl.value = (price / cost * 100).toFixed(1);
+      }
+    });
+  }
+
+  // 頁面載入後 bind（modal 可能尚未存在，用 MutationObserver 等待）
+  window.addEventListener('load', () => setTimeout(_bind, 800));
+  const _obs = new MutationObserver(() => { if (!_bound) _bind(); });
+  window.addEventListener('load', () => {
+    _obs.observe(document.body, { childList: true, subtree: false });
+  });
+  // 也直接嘗試（某些情況 DOMContentLoaded 就已就緒）
+  document.addEventListener('DOMContentLoaded', () => setTimeout(_bind, 300));
+})();
+
 /* ── fetchLiveAndRender 供 Section 0 調用 ── */
 async function fetchLiveAndRender() {
   try {
