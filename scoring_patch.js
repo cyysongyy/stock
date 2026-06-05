@@ -36,6 +36,7 @@
 
 async function _yFetch(url) {
   // 直接 fetch + allorigins fallback
+  // iOS 15 不支援 AbortSignal.timeout()，改用 AbortController + setTimeout
   const tries = [
     u => u,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -43,10 +44,17 @@ async function _yFetch(url) {
   ];
   for (const t of tries) {
     try {
-      const r = await fetch(t(url), {
-        signal: AbortSignal.timeout(10000),
-        headers: { 'Accept': 'application/json' }
-      });
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), 10000);
+      let r;
+      try {
+        r = await fetch(t(url), {
+          signal:  ctrl.signal,
+          headers: { 'Accept': 'application/json' }
+        });
+      } finally {
+        clearTimeout(tid);
+      }
       if (!r.ok) continue;
       const txt = await r.text();
       if (!txt || txt.trim()[0] === '<') continue;
