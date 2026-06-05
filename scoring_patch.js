@@ -36,7 +36,7 @@
 
 async function _yFetch(url) {
   // 直接 fetch + allorigins fallback
-  // iOS 15 不支援 AbortSignal.timeout()，改用 AbortController + setTimeout
+  // 注意：iOS 15 不支援 AbortSignal.timeout()，改用 AbortController + setTimeout
   const tries = [
     u => u,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -827,6 +827,11 @@ async function fetchLiveAndRender() {
     const codes = holdings
       .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
       .filter(Boolean);
-    if (codes.length) await fetchTWSEPrices(codes);
+    if (!codes.length) return;
+    await fetchTWSEPrices(codes);
+    // 抓完價格後重新渲染持股列表（手機版關鍵：沒有這行畫面不會更新）
+    if (typeof renderPortfolio === 'function') {
+      try { await renderPortfolio(); } catch(e) {}
+    }
   } catch(e) {}
 }
