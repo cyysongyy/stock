@@ -504,15 +504,15 @@ async function renderTechAnalysis() {
 }
 
 /* ================================================
-   9. fetchTWSEPrices 覆蓋
+   9. 即時股價抓取（不覆蓋 index.html 的 fetchTWSEPrices）
+      改名為 _fetchYahooPrices，避免 hoisting 衝突
       策略：
-      1. Yahoo Finance v6 quote API（即時報價，與 Yahoo 頁面一致）
-         批次查詢，速度快
+      1. Yahoo Finance v8 chart API（即時 meta.regularMarketPrice）
       2. TWSE MIS + proxy（補齊主動型ETF等 Yahoo 沒有的代碼）
-      失敗時保留舊快取，不清空
+      成功才合併寫入，失敗保留舊快取
    ================================================ */
 
-async function fetchTWSEPrices(codes) {
+async function _fetchYahooPrices(codes) {
   const prices = {};
   const today = new Date().toLocaleDateString('zh-TW');
 
@@ -828,10 +828,13 @@ async function fetchLiveAndRender() {
       .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
       .filter(Boolean);
     if (!codes.length) return;
-    await fetchTWSEPrices(codes);
-    // 抓完價格後重新渲染持股列表（手機版關鍵：沒有這行畫面不會更新）
-    if (typeof renderPortfolio === 'function') {
-      try { await renderPortfolio(); } catch(e) {}
+    // 使用 _fetchYahooPrices（不覆蓋原本 index.html 的 fetchTWSEPrices）
+    const prices = await _fetchYahooPrices(codes);
+    // 抓到價格才重新渲染（手機版關鍵）
+    if (Object.keys(prices).length > 0) {
+      if (typeof renderPortfolio === 'function') {
+        try { await renderPortfolio(); } catch(e) {}
+      }
     }
   } catch(e) {}
 }
