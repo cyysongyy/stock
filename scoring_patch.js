@@ -542,7 +542,7 @@ async function _fetchYahooPrices(codes) {
 
   await Promise.all(codes.map(c => _yahooLivePrice(c)));
 
-  /* ── 方法2: TWSE MIS（補齊 Yahoo 沒有的代碼，如主動型ETF）── */
+  /* ── 方法2: TWSE MIS（補齊 Yahoo 沒有的代碼）── */
   const miss = codes.filter(c => !prices[c]);
   if (miss.length) {
     async function _mis(list, mkt) {
@@ -572,6 +572,61 @@ async function _fetchYahooPrices(codes) {
     await _mis(miss, 'tse');
     const still = miss.filter(c => !prices[c]);
     if (still.length) await _mis(still, 'otc');
+  }
+
+  /* ── 方法3: TWSE Open API（有 CORS 標頭，不需 proxy，最穩定）── */
+  const miss2 = codes.filter(c => !prices[c]);
+  if (miss2.length) {
+    try {
+      const ctrl2 = new AbortController();
+      const tid2 = setTimeout(() => ctrl2.abort(), 12000);
+      let resp;
+      try {
+        resp = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', {
+          signal: ctrl2.signal, cache: 'no-store'
+        });
+      } finally { clearTimeout(tid2); }
+      if (resp && resp.ok) {
+        const data = await resp.json();
+        data.forEach(s => {
+          if (miss2.includes(s.Code)) {
+            const p = parseFloat((s.ClosingPrice || '').replace(/,/g, '')) || null;
+            const o = parseFloat((s.OpeningPrice || '').replace(/,/g, '')) || null;
+            if (p) prices[s.Code] = {
+              price:  p,
+              chgPct: o && o > 0 ? +((p - o) / o * 100).toFixed(2) : null,
+              name:   s.Name || s.Code,
+              date:   today
+            };
+          }
+        });
+      }
+    } catch(e) {}
+    // 上櫃用 TPEx Open API
+    const miss3 = codes.filter(c => !prices[c]);
+    if (miss3.length) {
+      try {
+        const ctrl3 = new AbortController();
+        const tid3 = setTimeout(() => ctrl3.abort(), 12000);
+        let resp3;
+        try {
+          resp3 = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', {
+            signal: ctrl3.signal, cache: 'no-store'
+          });
+        } finally { clearTimeout(tid3); }
+        if (resp3 && resp3.ok) {
+          const data3 = await resp3.json();
+          data3.forEach(s => {
+            if (miss3.includes(s.SecuritiesCompanyCode)) {
+              const p = parseFloat((s.Close || '').replace(/,/g, '')) || null;
+              if (p) prices[s.SecuritiesCompanyCode] = {
+                price: p, chgPct: null, name: s.CompanyName || s.SecuritiesCompanyCode, date: today
+              };
+            }
+          });
+        }
+      } catch(e) {}
+    }
   }
 
   /* ── 成功才合併寫入 localStorage，失敗保留舊快取 ── */
@@ -829,12 +884,10 @@ async function fetchLiveAndRender() {
       .filter(Boolean);
     if (!codes.length) return;
     // 使用 _fetchYahooPrices（不覆蓋原本 index.html 的 fetchTWSEPrices）
-    const prices = await _fetchYahooPrices(codes);
-    // 抓到價格才重新渲染（手機版關鍵）
-    if (Object.keys(prices).length > 0) {
-      if (typeof renderPortfolio === 'function') {
-        try { await renderPortfolio(); } catch(e) {}
-      }
+    await _fetchYahooPrices(codes);
+    // 無論是否抓到新價格，都重新渲染（確保畫面同步）
+    if (typeof renderPortfolio === 'function') {
+      try { await renderPortfolio(); } catch(e) {}
     }
   } catch(e) {}
 }
