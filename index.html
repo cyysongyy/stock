@@ -615,7 +615,11 @@ let alertedKeys=new Set();
 let openDetailIdx=-1;
 
 // ── Setup ─────────────────────────────────────────────────────
-function init(){const n=localStorage.getItem(KEY_NAME);if(n)showApp(n);else document.getElementById('setup-screen').style.display='flex';updateMarketStatus();setInterval(updateMarketStatus,60000);if(Notification.permission==='granted')setNotifGranted();
+function init(){
+  const _hp=new URLSearchParams(location.hash.slice(1));
+  const _hn=_hp.get('name');
+  if(_hn)localStorage.setItem(KEY_NAME,_hn);
+  const n=localStorage.getItem(KEY_NAME);if(n)showApp(n);if(n)showApp(n);else document.getElementById('setup-screen').style.display='flex';updateMarketStatus();setInterval(updateMarketStatus,60000);if(Notification.permission==='granted')setNotifGranted();
   // Auto-start monitor if market is open
   setTimeout(()=>{if(isMarketOpen()&&holdings.length&&!monitorOn){toggleMonitor();showToast('台股開盤，自動開始監控 📡');}},1500);
 }
