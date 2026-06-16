@@ -758,33 +758,58 @@ function parseTWSE(j,prices){
     if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
   });
 }
-async function fetchYahooPrices(codes,prices){
-  const symbols=codes.map(c=>c+'.TW').join(',');
-  const url='https://query1.finance.yahoo.com/v7/finance/quote?symbols='+encodeURIComponent(symbols)+'&fields=regularMarketPrice,regularMarketChangePercent,regularMarketPreviousClose,longName,shortName';
+async function fetchOpenApiPrices(codes,prices){
+  // TWSE OpenAPI — public, CORS-friendly, returns today's closing prices for all TSE stocks
   try{
-    const r=await fetchWithProxy(url);
-    const j=await r.json();
-    (j.quoteResponse&&j.quoteResponse.result||[]).forEach(q=>{
-      const code=q.symbol.replace('.TW','');
-      const price=q.regularMarketPrice||null;
-      const prev=q.regularMarketPreviousClose||null;
-      const chgPct=q.regularMarketChangePercent||null;
-      if(price)prices[code]={price,chgPct,name:q.longName||q.shortName||code,date:new Date().toLocaleDateString('zh-TW'),open:null,high:null,low:null,vol:0,prev};
-    });
-  }catch(e){console.warn('Yahoo price fallback failed:',e.message);}
+    const txt=await fetchAny('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',15000);
+    if(txt){
+      const arr=JSON.parse(txt)||[];
+      const map={};arr.forEach(r=>{if(r.Code)map[r.Code]=r;});
+      codes.forEach(c=>{
+        const r=map[c];
+        if(!r)return;
+        const price=parseFloat(r.ClosingPrice)||null;
+        const open=parseFloat(r.OpeningPrice)||null;
+        const high=parseFloat(r.HighestPrice)||null;
+        const low=parseFloat(r.LowestPrice)||null;
+        const prev=parseFloat(r.LastBestBidPrice)||price;
+        const chgPct=price&&prev?((price-prev)/prev*100):null;
+        if(price)prices[c]={price,chgPct,name:r.Name||c,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol:parseInt(r.TradeVolume)||0,prev};
+      });
+    }
+  }catch(e){console.warn('OpenAPI TSE failed:',e.message);}
+  // OTC fallback via TPEX OpenAPI
+  const missing2=codes.filter(c=>!prices[c]);
+  if(missing2.length){
+    try{
+      const txt=await fetchAny('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes',15000);
+      if(txt){
+        const arr=JSON.parse(txt)||[];
+        const map={};arr.forEach(r=>{if(r.SecuritiesCompanyCode)map[r.SecuritiesCompanyCode]=r;});
+        missing2.forEach(c=>{
+          const r=map[c];if(!r)return;
+          const price=parseFloat(r.Close)||null;
+          const prev=parseFloat(r.PreviousClose)||price;
+          const chgPct=price&&prev?((price-prev)/prev*100):null;
+          if(price)prices[c]={price,chgPct,name:r.CompanyName||c,date:new Date().toLocaleDateString('zh-TW'),open:parseFloat(r.Open)||null,high:parseFloat(r.High)||null,low:parseFloat(r.Low)||null,vol:0,prev};
+        });
+      }
+    }catch(e){console.warn('OpenAPI OTC failed:',e.message);}
+  }
 }
 async function fetchTWSEPrices(codes){
   const prices={};
   const exch=codes.map(c=>'tse_'+c+'.tw').join('|');
   const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
-  try{const j=await fetchTWSEJson(url);parseTWSE(j,prices);}catch(e){console.warn('TWSE TSE failed:',e.message);}
+  try{const j=await fetchTWSEJson(url);parseTWSE(j,prices);}catch(e){console.warn('TWSE MIS failed:',e.message);}
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
     const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
     try{const j=await fetchTWSEJson('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0');parseTWSE(j,prices);}catch(e){}
   }
+  // Fallback: TWSE/TPEX OpenAPI (public, no CORS issue)
   const stillMissing=codes.filter(c=>!prices[c]);
-  if(stillMissing.length)await fetchYahooPrices(stillMissing,prices);
+  if(stillMissing.length)await fetchOpenApiPrices(stillMissing,prices);
   return prices;
 }
 
