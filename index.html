@@ -144,6 +144,17 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .tp-bar-fill.target{background:linear-gradient(90deg,#4d9eff,#00c853)}
 .tp-bar-fill.stop{background:linear-gradient(90deg,#ff4757,#ff8800)}
 .auto-refresh-badge{font-size:9px;color:#4d9eff;padding:1px 6px;border:1px solid #4d9eff44;border-radius:8px;margin-left:auto}
+/* ── Sector chart ── */
+.sector-card{background:var(--card);padding:14px 16px;border-bottom:1px solid var(--border)}
+.sector-title{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.sector-row{display:flex;align-items:center;gap:12px}
+.sector-donut{position:relative;width:90px;height:90px;flex-shrink:0}
+.sector-donut canvas{position:absolute;inset:0}
+.sector-legend{flex:1;display:flex;flex-direction:column;gap:5px}
+.sector-item{display:flex;align-items:center;gap:6px;font-size:10px}
+.sector-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sector-name{flex:1;color:var(--text)}
+.sector-pct{font-weight:700;color:var(--sub);min-width:34px;text-align:right}
 /* ── Signal tint (left border per score) ── */
 .holding-row.sig-green{border-left:3px solid #00c853}
 .holding-row.sig-yellow{border-left:3px solid #f5a623}
@@ -643,7 +654,7 @@ let holdings=(JSON.parse(localStorage.getItem(KEY_HOLD)||'[]')).map(h=>{
 });
 let alertLog=JSON.parse(localStorage.getItem(KEY_ALERTS)||'[]');
 let currentData=null;
-let chartDonut=null,chartPrice=null,chartRSI=null,chartMACD=null,chartVol=null;
+let chartDonut=null,chartSector=null,chartPrice=null,chartRSI=null,chartMACD=null,chartVol=null;
 let monitorOn=false,monitorTimer=null,countdownTimer=null,nextRefreshAt=0,dataCache={};
 let priceCache=JSON.parse(localStorage.getItem('tw_price_cache')||'{}');
 let alertedKeys=new Set();
@@ -959,6 +970,26 @@ async function renderPortfolio(liveDataMap){
 
   // ── Donut chart ──
   if(chartDonut){chartDonut.destroy();chartDonut=null;}
+  if(chartSector){chartSector.destroy();chartSector=null;}
+
+  // ── Sector data ──
+  const SECTOR_COLORS={'半導體':'#4d9eff','ETF':'#00c853','金融':'#f5a623','電子代工':'#ff6b81','傳產':'#a855f7','生技':'#06b6d4','其他':'#f97316','未分類':'#64748b'};
+  const sectorMap={};
+  rowData.forEach(({h,val,cost})=>{
+    const cat=(h.cat&&h.cat.trim())||'未分類';
+    if(!sectorMap[cat])sectorMap[cat]=0;
+    sectorMap[cat]+=(val||cost);
+  });
+  const sectorTotal=Object.values(sectorMap).reduce((a,b)=>a+b,0);
+  const sectorEntries=Object.entries(sectorMap).sort((a,b)=>b[1]-a[1]);
+  const sectorColors=sectorEntries.map(([k])=>SECTOR_COLORS[k]||(()=>{const h2=Array.from(k).reduce((a,c)=>a+c.charCodeAt(0),0);return`hsl(${h2%360},65%,55%)`;})());
+  const sectorLegend=sectorEntries.map(([k,v],idx)=>`
+    <div class="sector-item">
+      <div class="sector-dot" style="background:${sectorColors[idx]}"></div>
+      <span class="sector-name">${k}</span>
+      <span class="sector-pct">${sectorTotal?(v/sectorTotal*100).toFixed(1)+'%':'—'}</span>
+    </div>`).join('');
+
   ovWrap.innerHTML=`
     <div class="overview-card">
       <div class="ov-donut-row">
@@ -991,10 +1022,21 @@ async function renderPortfolio(liveDataMap){
         <div class="ov-btn" onclick="document.getElementById('import-file').click()">📥 匯入</div>
         <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
       </div>
+    </div>
+    <div class="sector-card">
+      <div class="sector-title">持股分佈</div>
+      <div class="sector-row">
+        <div class="sector-donut"><canvas id="chart-sector"></canvas></div>
+        <div class="sector-legend">${sectorLegend}</div>
+      </div>
     </div>`;
   const cvs=document.getElementById('chart-donut');
   if(cvs){
     chartDonut=new Chart(cvs,{type:'doughnut',data:{datasets:[{data:totalVal?[totalCost,Math.max(0,totalPL),Math.max(0,-totalPL)]:[1,0,0],backgroundColor:totalVal?['#4d9eff','#ff4757','#00d68f']:['#2a2f45'],borderWidth:0,cutout:'72%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},animation:{animateRotate:true,duration:600}}});
+  }
+  const cvs2=document.getElementById('chart-sector');
+  if(cvs2&&sectorEntries.length){
+    chartSector=new Chart(cvs2,{type:'doughnut',data:{labels:sectorEntries.map(([k])=>k),datasets:[{data:sectorEntries.map(([,v])=>v),backgroundColor:sectorColors,borderWidth:0,cutout:'68%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>{const pct=sectorTotal?(ctx.parsed/sectorTotal*100).toFixed(1)+'%':'';return` ${ctx.label} ${pct}`;}}}}  ,animation:{animateRotate:true,duration:600}}});
   }
 
   // ── Table ──
