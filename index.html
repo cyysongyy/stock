@@ -758,6 +758,21 @@ function parseTWSE(j,prices){
     if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
   });
 }
+async function fetchYahooPrices(codes,prices){
+  const symbols=codes.map(c=>c+'.TW').join(',');
+  const url='https://query1.finance.yahoo.com/v7/finance/quote?symbols='+encodeURIComponent(symbols)+'&fields=regularMarketPrice,regularMarketChangePercent,regularMarketPreviousClose,longName,shortName';
+  try{
+    const r=await fetchWithProxy(url);
+    const j=await r.json();
+    (j.quoteResponse&&j.quoteResponse.result||[]).forEach(q=>{
+      const code=q.symbol.replace('.TW','');
+      const price=q.regularMarketPrice||null;
+      const prev=q.regularMarketPreviousClose||null;
+      const chgPct=q.regularMarketChangePercent||null;
+      if(price)prices[code]={price,chgPct,name:q.longName||q.shortName||code,date:new Date().toLocaleDateString('zh-TW'),open:null,high:null,low:null,vol:0,prev};
+    });
+  }catch(e){console.warn('Yahoo price fallback failed:',e.message);}
+}
 async function fetchTWSEPrices(codes){
   const prices={};
   const exch=codes.map(c=>'tse_'+c+'.tw').join('|');
@@ -768,6 +783,8 @@ async function fetchTWSEPrices(codes){
     const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
     try{const j=await fetchTWSEJson('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0');parseTWSE(j,prices);}catch(e){}
   }
+  const stillMissing=codes.filter(c=>!prices[c]);
+  if(stillMissing.length)await fetchYahooPrices(stillMissing,prices);
   return prices;
 }
 
