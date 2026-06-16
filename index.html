@@ -800,17 +800,35 @@ async function fetchOpenApiPrices(codes,prices){
     }catch(e){console.warn('OpenAPI OTC failed:',e.message);}
   }
 }
+// ── Google Apps Script proxy (最優先，伺服器端抓 TWSE，無 CORS) ─
+const GAS_URL='https://script.google.com/macros/s/AKfycbzF45ZAVSZHIAotLNDJwZbKh6jCU4ACFZ8JNL63N8mEEIZit5n-o9dwEYOWFYIPKpDy/exec';
+const GAS_SECRET='chenyy1204';
+async function fetchGasPrices(codes,prices){
+  const url=GAS_URL+'?action=price&secret='+GAS_SECRET+'&codes='+codes.join(',');
+  try{
+    const r=await fetchT(url,12000);
+    if(!r.ok)return;
+    const j=await r.json();
+    if(j.ok&&j.prices)Object.assign(prices,j.prices);
+  }catch(e){console.warn('GAS price failed:',e.message);}
+}
 async function fetchTWSEPrices(codes){
   const prices={};
-  const exch=codes.map(c=>'tse_'+c+'.tw').join('|');
-  const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
-  try{const j=await fetchTWSEJson(url);parseTWSE(j,prices);}catch(e){console.warn('TWSE MIS failed:',e.message);}
+  // 1. Google Apps Script proxy (server-side, no CORS)
+  await fetchGasPrices(codes,prices);
+  // 2. TWSE MIS direct / via proxy for anything still missing
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
-    const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
-    try{const j=await fetchTWSEJson('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0');parseTWSE(j,prices);}catch(e){}
+    const exch=missing.map(c=>'tse_'+c+'.tw').join('|');
+    const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
+    try{const j=await fetchTWSEJson(url);parseTWSE(j,prices);}catch(e){}
+    const missing2=missing.filter(c=>!prices[c]);
+    if(missing2.length){
+      const exchOtc=missing2.map(c=>'otc_'+c+'.tw').join('|');
+      try{const j=await fetchTWSEJson('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0');parseTWSE(j,prices);}catch(e){}
+    }
   }
-  // Fallback: TWSE/TPEX OpenAPI (public, no CORS issue)
+  // 3. TWSE/TPEX OpenAPI as final fallback (closing price only)
   const stillMissing=codes.filter(c=>!prices[c]);
   if(stillMissing.length)await fetchOpenApiPrices(stillMissing,prices);
   return prices;
