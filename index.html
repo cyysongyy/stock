@@ -144,6 +144,37 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .tp-bar-fill.target{background:linear-gradient(90deg,#4d9eff,#00c853)}
 .tp-bar-fill.stop{background:linear-gradient(90deg,#ff4757,#ff8800)}
 .auto-refresh-badge{font-size:9px;color:#4d9eff;padding:1px 6px;border:1px solid #4d9eff44;border-radius:8px;margin-left:auto}
+/* ── Signal tint (left border per score) ── */
+.holding-row.sig-green{border-left:3px solid #00c853}
+.holding-row.sig-yellow{border-left:3px solid #f5a623}
+.holding-row.sig-red{border-left:3px solid #ff4757}
+/* ── Score bar ── */
+.score-bar-wrap{display:flex;align-items:center;gap:4px;margin-top:3px}
+.score-bar-track{width:48px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;flex-shrink:0}
+.score-bar-fill{height:100%;border-radius:2px;transition:width .4s}
+.score-bar-fill.green{background:linear-gradient(90deg,#00c853,#69f0ae)}
+.score-bar-fill.yellow{background:linear-gradient(90deg,#f5a623,#ffd600)}
+.score-bar-fill.red{background:linear-gradient(90deg,#ff4757,#ff8800)}
+.score-num{font-size:9px;font-weight:700;min-width:18px}
+.score-num.green{color:#00c853}.score-num.yellow{color:#f5a623}.score-num.red{color:#ff4757}
+/* ── Market dashboard ── */
+.mkt-dash{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)}
+.mkt-cell{background:var(--card2);padding:9px 10px;text-align:center}
+.mkt-cell-label{font-size:9px;color:var(--sub);margin-bottom:2px;text-transform:uppercase;letter-spacing:.3px}
+.mkt-cell-val{font-size:14px;font-weight:700}.mkt-cell-val.up{color:var(--red)}.mkt-cell-val.down{color:var(--green)}
+.mkt-cell-chg{font-size:9px;font-weight:600}.mkt-cell-chg.up{color:var(--red)}.mkt-cell-chg.down{color:var(--green)}
+/* ── Sparkline ── */
+.spark-row{grid-column:1/-1;padding:4px 0 2px;display:flex;align-items:center;gap:6px}
+.spark-label{font-size:8px;color:var(--sub)}
+/* ── Distance badges ── */
+.dist-wrap{grid-column:1/-1;display:flex;gap:5px;padding:3px 0 4px;flex-wrap:wrap}
+.dist-tag{font-size:9px;padding:2px 7px;border-radius:8px;font-weight:600}
+.dist-target-near{background:#00c85320;color:#00c853}
+.dist-target-mid{background:#f5a62320;color:#f5a623}
+.dist-target-over{background:#ff475720;color:#ff4757}
+.dist-stop-safe{background:#4d9eff18;color:#4d9eff}
+.dist-stop-warn{background:#f5a62320;color:#f5a623}
+.dist-stop-danger{background:#ff475720;color:#ff4757}
 
 /* Holding detail panel */
 .detail-panel{background:var(--card2);border-bottom:2px solid var(--border);padding:12px 14px;display:none}
@@ -403,6 +434,7 @@ select option{background:var(--card2);color:var(--text)}
 
   <!-- Portfolio -->
   <div id="sec-portfolio" class="section active">
+    <div id="mkt-dash" class="mkt-dash"></div>
     <div id="overview-wrap"></div>
     <div id="holdings-wrap"></div>
   </div>
@@ -663,6 +695,7 @@ async function fetchLiveAndRender(){
   Object.assign(dataCache,dataMap);
   renderPortfolio(dataMap);
   refreshScores().then(()=>renderPortfolio(dataMap));
+  fetchMarketDashboard();
 }
 function setUsername(n){document.getElementById('top-username').textContent=n;document.getElementById('avatar-letter').textContent=n.charAt(0).toUpperCase();}
 
@@ -980,11 +1013,14 @@ async function renderPortfolio(liveDataMap){
     const volBadge=(()=>{if(!todayVol)return'';const k=todayVol/1000;const cls=k>5000?'high':k>500?'normal':'low';const lbl=k>=1000?(k/1000).toFixed(1)+'M':k.toFixed(0)+'K';return`<span class="vol-badge ${cls}">量${lbl}</span>`;})();
     // Target/stop progress bars
     const tpBars=(()=>{if(!curr)return'';let out='';if(h.target&&h.target>h.cost){const pct=Math.min(100,Math.round((curr-h.cost)/(h.target-h.cost)*100));out+=`<div class="tp-bar-row">🎯<div class="tp-bar-track"><div class="tp-bar-fill target" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.target}</div>`;}if(h.stop&&h.stop<h.cost){const pct=Math.min(100,Math.round((h.cost-curr)/(h.cost-h.stop)*100));const cls=pct>70?'color:#ff4757':'';out+=`<div class="tp-bar-row" style="${cls}">🛑<div class="tp-bar-track"><div class="tp-bar-fill stop" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.stop}</div>`;}return out?`<div class="tp-bar-wrap">${out}</div>`:'';})();
+    const sc=scoreCache[h.code.replace('.TW','')];
+    const sigClass=sc?('sig-'+sc.color):'';
     return`
-      <div class="holding-row" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 28px 80px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
+      <div class="holding-row ${sigClass}" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 28px 80px 70px 80px;grid-template-rows:auto auto auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
         <div>
           <div class="hr-code">${h.code.replace('.TW','')}</div>
           <div class="hr-sname">${(()=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';return h.name||priceCache[sym]?.name||priceCache[h.code]?.name||'';})()} </div>
+          ${renderScoreBar(h.code.replace('.TW',''))}
         </div>
         <div class="hr-sig">${renderScoreDot(h.code.replace('.TW',''))}</div>
         <div class="hr-prices">
@@ -1001,6 +1037,8 @@ async function renderPortfolio(liveDataMap){
           ${chgPct!=null?`<div class="hr-chg ${chgCls}">${chgPct>=0?'▲':'▼'}${Math.abs(chgPct).toFixed(2)}%</div>`:''}
         </div>
         ${(rangeBar||volBadge)?`<div class="hr-intraday">${todayOpen?`<div class="hr-ohlc"><span>開</span><span class="${chgCls}">${todayOpen.toFixed(1)}</span></div>`:''}${rangeBar}${volBadge}</div>`:''}
+        ${renderSparkline(h.code.replace('.TW',''))}
+        ${renderDistanceBadge(h,curr)}
         ${tpBars}
       </div>
       <div class="detail-panel ${isOpen?'open':''}" id="detail-${i}">
@@ -1115,6 +1153,83 @@ function renderScoreDot(code){
   if(!sc)return'<div class="sig-dot grey" title="計算中…"></div>';
   const label=sc.total>=80?'適合買入 ✓':sc.total>=60?'可考慮':'暫不建議';
   return'<div class="sig-dot '+sc.color+'" title="'+label+' ('+sc.total+'分)" onclick="event.stopPropagation();switchTab(\'analysis\')"></div>';
+}
+function renderScoreBar(code){
+  const sc=scoreCache[code];
+  if(!sc)return'<div class="score-bar-wrap"><div class="score-bar-track"><div class="score-bar-fill" style="width:0%"></div></div><span class="score-num" style="color:var(--sub)">?</span></div>';
+  const c=sc.color;
+  return`<div class="score-bar-wrap"><div class="score-bar-track"><div class="score-bar-fill ${c}" style="width:${sc.total}%"></div></div><span class="score-num ${c}">${sc.total}</span></div>`;
+}
+function renderSparkline(code){
+  const sym=code+'.TW';
+  const d=dataCache[sym]||dataCache[code];
+  if(!d||!d.close||d.close.length<5)return'';
+  const closes=d.close.slice(-20).filter(v=>v>0);
+  if(closes.length<3)return'';
+  const mn=Math.min(...closes),mx=Math.max(...closes);
+  if(mn===mx)return'';
+  const W=80,H=20;
+  const pts=closes.map((v,i)=>`${((i/(closes.length-1))*W).toFixed(1)},${(H-((v-mn)/(mx-mn))*H).toFixed(1)}`).join(' ');
+  const last=closes[closes.length-1],prev2=closes[closes.length-2];
+  const col=last>=prev2?'#ff4757':'#00c853';
+  return`<div class="spark-row"><span class="spark-label">${closes.length}日</span><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg></div>`;
+}
+function renderDistanceBadge(h,curr){
+  if(!curr)return'';
+  let out='';
+  if(h.target&&h.target>h.cost){
+    const d=(h.target-curr)/curr*100;
+    if(d>0){const cls=d<=5?'dist-target-near':d<=15?'dist-target-mid':'dist-target-over';out+=`<span class="dist-tag ${cls}">目標還差 ${d.toFixed(1)}%</span>`;}
+    else{out+=`<span class="dist-tag dist-target-near">已達目標 +${Math.abs(d).toFixed(1)}%</span>`;}
+  }
+  if(h.stop&&h.stop<curr){
+    const d=(curr-h.stop)/curr*100;
+    const cls=d<=5?'dist-stop-danger':d<=15?'dist-stop-warn':'dist-stop-safe';
+    out+=`<span class="dist-tag ${cls}">停損距 ${d.toFixed(1)}%</span>`;
+  }
+  return out?`<div class="dist-wrap">${out}</div>`:'';
+}
+let _mktData={};
+async function fetchMarketDashboard(){
+  // Weighted index via GAS proxy
+  try{
+    const r=await fetchT(GAS_URL+'?action=price&secret='+GAS_SECRET+'&codes=t00',10000);
+    const j=await r.json();
+    if(j.ok&&j.prices&&j.prices.t00)_mktData.index=j.prices.t00;
+  }catch(e){}
+  // Foreign investor via TWSE OpenAPI
+  try{
+    const txt=await fetchAny('https://openapi.twse.com.tw/v1/exchangeReport/TWT38U',12000);
+    if(txt){
+      const arr=JSON.parse(txt)||[];
+      const row=arr.find(r=>r.name&&(r.name.includes('外陸資')||r.name.includes('外資')));
+      if(row){const buy=parseInt((row.buy||'').replace(/,/g,''))||0,sell=parseInt((row.sell||'').replace(/,/g,''))||0;_mktData.foreign=buy-sell;}
+    }
+  }catch(e){}
+  renderMarketDashboard();
+}
+function renderMarketDashboard(){
+  const el=document.getElementById('mkt-dash');if(!el)return;
+  const idx=_mktData.index;
+  const idxHtml=`<div class="mkt-cell">
+    <div class="mkt-cell-label">加權指數</div>
+    <div class="mkt-cell-val ${idx?(idx.chgPct>=0?'up':'down'):''}">${idx?Math.round(idx.price).toLocaleString():'—'}</div>
+    <div class="mkt-cell-chg ${idx?(idx.chgPct>=0?'up':'down'):''}">${idx&&idx.chgPct!=null?(idx.chgPct>=0?'▲':'▼')+Math.abs(idx.chgPct).toFixed(2)+'%':''}</div>
+  </div>`;
+  const changes=holdings.map(h=>{const pc=priceCache[h.code+'.TW']||priceCache[h.code];return pc?.chgPct??null;}).filter(v=>v!=null);
+  const avgChg=changes.length?changes.reduce((a,b)=>a+b,0)/changes.length:null;
+  const portHtml=`<div class="mkt-cell">
+    <div class="mkt-cell-label">持股均漲跌</div>
+    <div class="mkt-cell-val ${avgChg==null?'':avgChg>=0?'up':'down'}">${avgChg!=null?(avgChg>=0?'+':'')+avgChg.toFixed(2)+'%':'—'}</div>
+    <div class="mkt-cell-chg">${changes.length}支有報價</div>
+  </div>`;
+  const f=_mktData.foreign;
+  const fHtml=`<div class="mkt-cell">
+    <div class="mkt-cell-label">外資動向</div>
+    <div class="mkt-cell-val ${f==null?'':f>=0?'up':'down'}">${f!=null?(f>=0?'+':'')+Math.round(f/1e8*10)/10+'B':'—'}</div>
+    <div class="mkt-cell-chg ${f==null?'':f>=0?'up':'down'}">${f!=null?(f>=0?'買超':'賣超'):''}</div>
+  </div>`;
+  el.innerHTML=idxHtml+portHtml+fHtml;
 }
 function renderPortfolioScores(){
   const el=document.getElementById('analysis-content');if(!el)return;
