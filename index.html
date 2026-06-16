@@ -743,33 +743,30 @@ async function fetchViaProxy(url,ms=15000){for(const mkP of _px){try{const r=awa
 async function fetchAny(url,ms=15000){return(await fetchDirect(url,ms))||(await fetchViaProxy(url,ms));}
 
 // ── TWSE MIS API — with CORS proxy fallback ────────────────
-// Batch fetch current prices for multiple codes
+async function fetchTWSEJson(url){
+  // Try direct first, then each proxy; fetchAny returns text string
+  const text=await fetchAny(url,10000);
+  if(text){try{return JSON.parse(text);}catch(e){}}
+  return null;
+}
+function parseTWSE(j,prices){
+  (j&&j.msgArray||[]).forEach(s=>{
+    const price=parseFloat(s.z)||parseFloat(s.y)||null;
+    const prev=parseFloat(s.y)||null;
+    const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
+    const chgPct=price&&prev?((price-prev)/prev*100):null;
+    if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
+  });
+}
 async function fetchTWSEPrices(codes){
-  // Build ex_ch list: try tse first, otc as fallback
+  const prices={};
   const exch=codes.map(c=>'tse_'+c+'.tw').join('|');
   const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
-  const prices={};
-  try{
-    const r=await fetchAny(url,8000);
-    if(!r||!r.ok)throw new Error('TWSE '+(r?r.status:'no response'));
-    const j=await r.json();
-    (j.msgArray||[]).forEach(s=>{
-      const code=s.c;
-      const price=parseFloat(s.z)||parseFloat(s.y)||null;
-      const prev=parseFloat(s.y)||null;
-      const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
-      const chgPct=price&&prev?((price-prev)/prev*100):null;
-      if(price)prices[code]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
-    });
-  }catch(e){console.warn('TWSE fetch failed:',e.message);}
-  // Try OTC for any not found
+  try{const j=await fetchTWSEJson(url);parseTWSE(j,prices);}catch(e){console.warn('TWSE TSE failed:',e.message);}
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
     const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
-    try{
-      const r=await fetchAny('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0',8000);
-      if(r&&r.ok){const j=await r.json();(j.msgArray||[]).forEach(s=>{const price=parseFloat(s.z)||parseFloat(s.y)||null;const prev=parseFloat(s.y)||null;const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;const chgPct=price&&prev?((price-prev)/prev*100):null;if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};});}
-    }catch(e){}
+    try{const j=await fetchTWSEJson('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0');parseTWSE(j,prices);}catch(e){}
   }
   return prices;
 }
