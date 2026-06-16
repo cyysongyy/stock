@@ -742,7 +742,7 @@ async function fetchDirect(url,ms=12000){try{const r=await fetchT(url,ms);if(r.o
 async function fetchViaProxy(url,ms=15000){for(const mkP of _px){try{const r=await fetchT(mkP(url),ms);if(r.ok){const t=await r.text();if(t&&t.length>2)return t;}}catch(e){}}return null;}
 async function fetchAny(url,ms=15000){return(await fetchDirect(url,ms))||(await fetchViaProxy(url,ms));}
 
-// ── TWSE MIS API — no proxy needed, works on iPhone ────────
+// ── TWSE MIS API — with CORS proxy fallback ────────────────
 // Batch fetch current prices for multiple codes
 async function fetchTWSEPrices(codes){
   // Build ex_ch list: try tse first, otc as fallback
@@ -750,8 +750,8 @@ async function fetchTWSEPrices(codes){
   const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
   const prices={};
   try{
-    const r=await fetchT(url,8000);
-    if(!r.ok)throw new Error('TWSE '+r.status);
+    const r=await fetchAny(url,8000);
+    if(!r||!r.ok)throw new Error('TWSE '+(r?r.status:'no response'));
     const j=await r.json();
     (j.msgArray||[]).forEach(s=>{
       const code=s.c;
@@ -767,8 +767,8 @@ async function fetchTWSEPrices(codes){
   if(missing.length){
     const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
     try{
-      const r=await fetchT('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0',8000);
-      if(r.ok){const j=await r.json();(j.msgArray||[]).forEach(s=>{const price=parseFloat(s.z)||parseFloat(s.y)||null;const prev=parseFloat(s.y)||null;const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;const chgPct=price&&prev?((price-prev)/prev*100):null;if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};});}
+      const r=await fetchAny('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0',8000);
+      if(r&&r.ok){const j=await r.json();(j.msgArray||[]).forEach(s=>{const price=parseFloat(s.z)||parseFloat(s.y)||null;const prev=parseFloat(s.y)||null;const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;const chgPct=price&&prev?((price-prev)/prev*100):null;if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};});}
     }catch(e){}
   }
   return prices;
