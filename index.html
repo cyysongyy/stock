@@ -798,7 +798,7 @@ async function fetchTWSEJson(url){
 }
 function parseTWSE(j,prices){
   (j&&j.msgArray||[]).forEach(s=>{
-    const price=parseFloat(s.z)||parseFloat(s.y)||null;
+    const price=parseFloat(s.z)||parseFloat(s.b)||parseFloat(s.a)||parseFloat(s.y)||null;
     const prev=parseFloat(s.y)||null;
     const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
     const chgPct=price&&prev?((price-prev)/prev*100):null;
