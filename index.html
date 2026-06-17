@@ -707,6 +707,8 @@ async function fetchLiveAndRender(){
   renderPortfolio(dataMap);
   refreshScores().then(()=>renderPortfolio(dataMap));
   fetchMarketDashboard();
+  const el=document.getElementById('last-update-time');
+  if(el)el.textContent=new Date().toLocaleTimeString('zh-TW');
 }
 function setUsername(n){document.getElementById('top-username').textContent=n;document.getElementById('avatar-letter').textContent=n.charAt(0).toUpperCase();}
 
@@ -1018,6 +1020,7 @@ async function renderPortfolio(liveDataMap){
       </div>
       <div class="ov-actions">
         <div class="ov-btn" onclick="fetchLiveAndRender()" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
+        <div style="grid-column:1/-1;text-align:center;font-size:9px;color:var(--sub);padding:4px 0 2px">最後更新：<span id="last-update-time">—</span></div>
         <div class="ov-btn" onclick="exportData()">📤 匯出</div>
         <div class="ov-btn" onclick="document.getElementById('import-file').click()">📥 匯入</div>
         <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
