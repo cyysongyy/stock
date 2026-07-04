@@ -565,6 +565,8 @@ function saveAIKey(){
   closeModal('modal-ai-key');
   const p=detectAIProvider(k);
   showToast(k?(p?'🤖 '+aiProviderLabel(k)+' 已設定':'❓ Key 格式無法識別'):'AI Key 已清除');
+  const btn=document.getElementById('ai-scan-btn');
+  if(btn)btn.style.display=k?'':'none';
 }
 async function callAI(key,prompt){
   const p=detectAIProvider(key);
@@ -584,6 +586,73 @@ async function callAI(key,prompt){
     const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Gemini API 錯誤 '+r.status);
     return j.candidates[0].content.parts[0].text;
   }
+}
+function aiVerdictFromText(text){
+  if(/買入|進場|做多|買進/.test(text))return'buy';
+  if(/賣出|出場|做空|賣掉/.test(text))return'sell';
+  return'hold';
+}
+function aiVerdictHTML(code){
+  const c=aiCache[code];if(!c)return'';
+  const map={buy:'🟢 買',sell:'🔴 賣',hold:'🟡 觀望'};
+  const col={buy:'#00d68f',sell:'#ff4757',hold:'#f5a623'};
+  return`<span style="font-size:10px;font-weight:700;color:${col[c.verdict]};background:${col[c.verdict]}22;padding:2px 6px;border-radius:4px;white-space:nowrap">${map[c.verdict]}</span>`;
+}
+async function aiAnalyzeOne(code,data){
+  const key=localStorage.getItem(KEY_AI);
+  if(!key)return null;
+  const close=data.close,last=close.length-1,q=data.quote;
+  const price=close[last],name=q.longName||q.shortName||code;
+  const sigs=getSignals(data);
+  const {macd,signal,hist}=calcMACD(close);
+  const rsi=calcRSI(close);
+  const ma20=calcMA(close,20),ma60=calcMA(close,Math.min(60,close.length));
+  const chg=q.regularMarketChange||(price-close[last-1]);
+  const chgPct=q.regularMarketChangePercent||(chg/close[last-1]*100);
+  const vols=data.volume.slice(-20).filter(v=>v);
+  const avgVol=vols.length?Math.round(vols.reduce((a,b)=>a+b,0)/vols.length/1000):0;
+  const todayVol=data.volume[last]?Math.round(data.volume[last]/1000):0;
+  const prompt=`你是台灣股市技術分析師。根據以下數據給出精準買賣建議。
+
+【股票】${name}（${code}）價格 $${price.toFixed(2)}（${chg>=0?'+':''}${chgPct.toFixed(2)}%）
+【技術】RSI ${rsi[last]?.toFixed(1)||'—'}${rsi[last]>70?' 超買':rsi[last]<30?' 超賣':''} | MACD柱 ${hist[last]?.toFixed(3)||'—'}${hist[last]>0&&hist[last-1]<0?' 🟢剛翻多':hist[last]<0&&hist[last-1]>0?' 🔴剛翻空':''} | MA20 $${ma20[last]?.toFixed(1)||'—'}(${price>(ma20[last]||0)?'↑上':' ↓下'}) | MA60 $${ma60[last]?.toFixed(1)||'—'}(${price>(ma60[last]||0)?'↑上':'↓下'})
+【量能】今 ${todayVol}張 vs 均 ${avgVol}張
+【基本】PE ${q.trailingPE?.toFixed(1)||'—'} | EPS $${q.epsTrailingTwelveMonths?.toFixed(2)||'—'} | 殖利率 ${q.dividendYield?(q.dividendYield*100).toFixed(1)+'%':'—'}
+【訊號】${sigs.map(s=>s.name+' '+s.desc+(s.type==='bull'?'🟢':s.type==='bear'?'🔴':'⚪')).join(' | ')}
+
+請用繁體中文回答：
+1. 🎯 操作建議（買入/賣出/觀望）+ 理由1句
+2. 💰 進場 $? | 止損 $? | 目標 $?
+3. ⚠️ 主要風險1句
+4. 📅 週期（短/中/長線）
+
+極度精簡，每點1-2句。`;
+  const text=await callAI(key,prompt);
+  const verdict=aiVerdictFromText(text);
+  aiCache[code]={verdict,text,ts:Date.now()};
+  return{verdict,text};
+}
+async function scanAllWithAI(){
+  const key=localStorage.getItem(KEY_AI);
+  if(!key){showToast('請先設定 AI API Key');openAIKeyModal();return;}
+  if(!holdings.length){showToast('尚無持股');return;}
+  const btn=document.getElementById('ai-scan-btn');
+  if(btn){btn.textContent='⏳ 分析中…';btn.disabled=true;}
+  let done=0;
+  for(const h of holdings){
+    const code=h.code.replace('.TW','');
+    const sym=code+'.TW';
+    try{
+      const data=await fetchYahoo(code);
+      await aiAnalyzeOne(code,data);
+    }catch(e){aiCache[code]={verdict:'hold',text:'無法取得資料：'+e.message,ts:Date.now()};}
+    done++;
+    if(btn)btn.textContent=`⏳ ${done}/${holdings.length}`;
+    await new Promise(r=>setTimeout(r,400));
+  }
+  if(btn){btn.textContent='🤖 AI 掃描庫存';btn.disabled=false;}
+  await fetchLiveAndRender();
+  showToast('🤖 AI 分析完成 ✅');
 }
 async function aiAnalyzeStock(){
   const key=localStorage.getItem(KEY_AI);
@@ -727,6 +796,7 @@ let monitorOn=false,monitorTimer=null,countdownTimer=null,nextRefreshAt=0,dataCa
 let priceCache=JSON.parse(localStorage.getItem('tw_price_cache')||'{}');
 let alertedKeys=new Set();
 let openDetailIdx=-1;
+let aiCache={}; // code → {verdict,text,ts}
 
 // ── Setup ─────────────────────────────────────────────────────
 function init(){
@@ -1053,7 +1123,7 @@ async function renderPortfolio(liveDataMap){
       <div class="ov-actions">
         <div class="ov-btn" onclick="fetchLiveAndRender()" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
         <div class="ov-btn" onclick="exportData()">📤 匯出</div>
-        <div class="ov-btn" onclick="document.getElementById('import-file').click()">📥 匯入</div>
+        <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}">🤖 AI 掃描庫存</div>
         <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
       </div>
     </div>`;
@@ -1083,6 +1153,7 @@ async function renderPortfolio(liveDataMap){
         <div>
           <div class="hr-code">${h.code.replace('.TW','')}</div>
           <div class="hr-sname">${(()=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';return h.name||priceCache[sym]?.name||priceCache[h.code]?.name||'';})()} </div>
+          ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
         <div class="hr-sig">${renderScoreDot(h.code.replace('.TW',''))}</div>
         <div class="hr-prices">
@@ -1150,6 +1221,7 @@ function renderDetailPanel(rd){
     </div>
     ${targetBar}
     ${h.note?`<div style="font-size:10px;color:var(--sub);margin-bottom:8px">📝 ${h.note}</div>`:''}
+    ${(()=>{const code=h.code.replace('.TW','');const c=aiCache[code];if(!c)return`<div style="margin:8px 0"><button onclick="aiAnalyzeSingle('${code}',${i});event.stopPropagation()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;border-radius:8px;padding:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">🤖 AI 深度分析此股</button></div>`;const col={buy:'#00d68f',sell:'#ff4757',hold:'#f5a623'};const lbl={buy:'🟢 建議買入',sell:'🔴 建議賣出',hold:'🟡 建議觀望'};const html=c.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');return`<div style="margin:8px 0;padding:10px;background:${col[c.verdict]}11;border:1px solid ${col[c.verdict]}44;border-radius:8px"><div style="font-size:12px;font-weight:700;color:${col[c.verdict]};margin-bottom:6px">${lbl[c.verdict]}</div><div style="font-size:11px;line-height:1.7;color:var(--text)">${html}</div><div style="font-size:9px;color:var(--sub);margin-top:6px">更新：${new Date(c.ts).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · <span onclick="aiAnalyzeSingle('${code}',${i});event.stopPropagation()" style="color:var(--blue);cursor:pointer">重新分析</span></div></div>`;})()}
     <div class="dp-actions">
       <button class="dp-btn edit" onclick="openAddModal(${i});event.stopPropagation()">✏️ 編輯</button>
       <button class="dp-btn add-target" onclick="openAddModal(${i});event.stopPropagation()">🎯 設目標</button>
@@ -1157,6 +1229,30 @@ function renderDetailPanel(rd){
     </div>`;
 }
 
+async function aiAnalyzeSingle(code,idx){
+  const key=localStorage.getItem(KEY_AI);
+  if(!key){showToast('請先設定 AI API Key');openAIKeyModal();return;}
+  const panel=document.getElementById('detail-'+idx);
+  if(panel){const btn=panel.querySelector('button');if(btn){btn.textContent='⏳ 分析中…';btn.disabled=true;}}
+  try{
+    const data=await fetchYahoo(code);
+    await aiAnalyzeOne(code,data);
+    // re-render just this detail panel
+    const rd=(() => {
+      const sym=code.includes('.')?code:code+'.TW';
+      const h=holdings[idx];
+      const pcached=priceCache[sym]||priceCache[code];
+      const curr=data.close[data.close.length-1];
+      const cost=h.cost*h.qty,val=curr?curr*h.qty:null,pl=val?val-cost:null,plPct=pl?(pl/cost*100):null;
+      const sigs=getSignals(data);const tl=getTrafficLight(h,curr,sigs);
+      return{h,i:idx,curr,cost,val,pl,plPct,sigs,tl};
+    })();
+    if(panel)panel.innerHTML=renderDetailPanel(rd);
+    // update badge in row
+    const row=panel.previousElementSibling;
+    if(row){const badgeWrap=row.querySelector('.hr-sname')?.parentElement;if(badgeWrap){const old=badgeWrap.querySelector('span[style*="border-radius:4px"]');if(old)old.remove();badgeWrap.insertAdjacentHTML('beforeend',aiVerdictHTML(code));}}
+  }catch(e){showToast('分析失敗：'+e.message,'err');if(panel){const btn=panel.querySelector('button');if(btn){btn.textContent='🤖 AI 深度分析此股';btn.disabled=false;}}}
+}
 function toggleDetail(i){
   openDetailIdx=openDetailIdx===i?-1:i;
   // just toggle CSS without full re-render
