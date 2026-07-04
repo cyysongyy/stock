@@ -530,20 +530,64 @@ function saveSheetSettings(){
   updateSheetBadge();
 }
 // ── AI Analysis ───────────────────────────────────────────────
+function detectAIProvider(key){
+  if(!key)return null;
+  if(key.startsWith('sk-ant-'))return'claude';
+  if(key.startsWith('sk-'))return'openai';
+  if(key.startsWith('AIza'))return'gemini';
+  return null;
+}
+function aiProviderLabel(key){
+  const p=detectAIProvider(key);
+  if(p==='claude')return'Claude (Haiku)';
+  if(p==='openai')return'ChatGPT (GPT-4o mini)';
+  if(p==='gemini')return'Gemini 2.5 Flash';
+  return'未知';
+}
 function openAIKeyModal(){
   document.getElementById('user-menu').classList.remove('open');
-  document.getElementById('ai-key-inp').value=localStorage.getItem(KEY_AI)||'';
+  const k=localStorage.getItem(KEY_AI)||'';
+  document.getElementById('ai-key-inp').value=k;
+  updateAIProviderBadge(k);
   document.getElementById('modal-ai-key').classList.add('open');
+}
+function updateAIProviderBadge(k){
+  const p=detectAIProvider(k);
+  const badge=document.getElementById('ai-provider-badge');
+  if(!badge)return;
+  if(!k){badge.textContent='';return;}
+  const labels={claude:'🟣 Claude',openai:'🟢 ChatGPT',gemini:'🔵 Gemini'};
+  badge.textContent=p?labels[p]||'❓ 未知格式':'❓ 無法識別';
 }
 function saveAIKey(){
   const k=document.getElementById('ai-key-inp').value.trim();
   if(k)localStorage.setItem(KEY_AI,k);else localStorage.removeItem(KEY_AI);
   closeModal('modal-ai-key');
-  showToast(k?'🤖 AI Key 已儲存':'AI Key 已清除');
+  const p=detectAIProvider(k);
+  showToast(k?(p?'🤖 '+aiProviderLabel(k)+' 已設定':'❓ Key 格式無法識別'):'AI Key 已清除');
+}
+async function callAI(key,prompt){
+  const p=detectAIProvider(key);
+  if(!p)throw new Error('無法識別 API Key 格式（需 sk-ant- / sk- / AIza 開頭）');
+  if(p==='claude'){
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Claude API 錯誤 '+r.status);
+    return j.content[0].text;
+  }
+  if(p==='openai'){
+    const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'OpenAI API 錯誤 '+r.status);
+    return j.choices[0].message.content;
+  }
+  if(p==='gemini'){
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+key,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1200}})});
+    const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Gemini API 錯誤 '+r.status);
+    return j.candidates[0].content.parts[0].text;
+  }
 }
 async function aiAnalyzeStock(){
   const key=localStorage.getItem(KEY_AI);
-  if(!key){showToast('請先設定 Anthropic API Key');openAIKeyModal();return;}
+  if(!key){showToast('請先設定 AI API Key');openAIKeyModal();return;}
   if(!currentData){showToast('請先查詢股票');return;}
   const data=currentData,close=data.close,last=close.length-1;
   const price=close[last],q=data.quote;
@@ -585,20 +629,14 @@ ${sigs.map(s=>`・${s.name}：${s.desc}（${s.type==='bull'?'🟢多':s.type==='
 5. 📅 建議持有週期（短線/中線/長線）
 
 語言精簡有力，每點不超過3句。`;
+  const providerName=aiProviderLabel(key);
   document.getElementById('ai-result-title').textContent='🤖 AI 深度分析 — '+name;
-  document.getElementById('ai-result').innerHTML='<div style="text-align:center;padding:20px"><div class="spinner"></div><p style="color:var(--sub);font-size:12px;margin-top:8px">Claude AI 分析中…</p></div>';
+  document.getElementById('ai-result').innerHTML='<div style="text-align:center;padding:20px"><div class="spinner"></div><p style="color:var(--sub);font-size:12px;margin-top:8px">'+providerName+' 分析中…</p></div>';
   document.getElementById('modal-ai-result').classList.add('open');
   try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:prompt}]})
-    });
-    const json=await resp.json();
-    if(!resp.ok)throw new Error(json.error?.message||'API 錯誤 '+resp.status);
-    const text=json.content[0].text;
+    const text=await callAI(key,prompt);
     const html=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
-    document.getElementById('ai-result').innerHTML='<div style="font-size:13px;line-height:1.9;color:var(--text)">'+html+'</div><div style="font-size:10px;color:var(--sub);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">⚠️ AI 分析僅供參考，不構成投資建議。投資有風險，操作需謹慎。</div>';
+    document.getElementById('ai-result').innerHTML='<div style="font-size:13px;line-height:1.9;color:var(--text)">'+html+'</div><div style="font-size:10px;color:var(--sub);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">由 '+providerName+' 生成 · ⚠️ 僅供參考，不構成投資建議</div>';
   }catch(e){
     document.getElementById('ai-result').innerHTML='<div style="color:var(--red);font-size:12px">分析失敗：'+e.message+'</div>';
   }
@@ -1460,16 +1498,18 @@ init();
   <div class="modal">
     <h3>🤖 AI 深度分析設定</h3>
     <div class="form-group">
-      <label>Anthropic API Key</label>
-      <input id="ai-key-inp" type="password" placeholder="sk-ant-..." style="font-size:12px">
+      <label>AI API Key <span id="ai-provider-badge" style="font-size:11px;font-weight:600;margin-left:6px"></span></label>
+      <input id="ai-key-inp" type="password" placeholder="sk-ant-… / sk-… / AIza…" style="font-size:12px" oninput="updateAIProviderBadge(this.value.trim())">
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal('modal-ai-key')">取消</button>
       <button class="btn-save" onclick="saveAIKey()">儲存</button>
     </div>
-    <div style="font-size:10px;color:var(--sub);margin-top:10px;line-height:1.6">
-      💡 API Key 僅存在本機，不會上傳。<br>
-      使用 Claude Haiku 模型分析買賣時機。
+    <div style="font-size:10px;color:var(--sub);margin-top:10px;line-height:1.8">
+      💡 API Key 僅存在本機，不會上傳。自動辨別：<br>
+      🟣 <b>Claude</b>：<code>sk-ant-</code> 開頭<br>
+      🟢 <b>ChatGPT</b>：<code>sk-</code> 開頭<br>
+      🔵 <b>Gemini</b>：<code>AIza</code> 開頭
     </div>
   </div>
 </div>
