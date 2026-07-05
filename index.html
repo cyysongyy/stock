@@ -82,6 +82,23 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .section.active{display:block}
 
 /* ── Portfolio Overview ── */
+/* US market → TW prediction */
+.usp-card{background:var(--card);margin:12px 14px 4px;border:1px solid var(--border);border-radius:16px;padding:14px 16px}
+.usp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.usp-title{font-size:13px;font-weight:800}
+.usp-date{font-size:10px;color:var(--sub)}
+.usp-idx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.usp-idx{background:var(--card2);border-radius:10px;padding:8px 4px;text-align:center}
+.usp-idx .nm{font-size:10px;color:var(--sub);margin-bottom:3px;white-space:nowrap}
+.usp-idx .chg{font-size:12px;font-weight:800}
+.usp-gauge{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--green),var(--card3) 50%,var(--red));margin:6px 2px 4px}
+.usp-marker{position:absolute;top:-3px;width:3px;height:14px;border-radius:2px;background:var(--text);box-shadow:0 0 6px #fff8}
+.usp-verdict{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.usp-verdict .txt{font-size:14px;font-weight:800}
+.usp-verdict .sub{font-size:10px;color:var(--sub)}
+.usp-note{font-size:9px;color:var(--sub);margin-top:8px;line-height:1.5}
+.usp-up{color:var(--red)}.usp-dn{color:var(--green)}.usp-flat{color:var(--sub)}
+
 .overview-card{background:var(--card);padding:20px 16px 16px;border-bottom:1px solid var(--border)}
 .ov-donut-row{display:flex;align-items:center;gap:20px;margin-bottom:16px}
 .donut-wrap{position:relative;width:110px;height:110px;flex-shrink:0}
@@ -401,6 +418,7 @@ select option{background:var(--card2);color:var(--text)}
 
   <!-- Portfolio -->
   <div id="sec-portfolio" class="section active">
+    <div id="usp-wrap"></div>
     <div id="overview-wrap"></div>
     <div id="holdings-wrap"></div>
   </div>
@@ -816,6 +834,7 @@ function showApp(name){
   updateSheetBadge();
   renderPortfolio(); // instant render with cached prices
   fetchLiveAndRender(); // background fetch
+  loadUSPredict(); // 美股前日收盤 → 台股預測
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
   // Auto-refresh every 30s during market hours (9:00-13:30)
   let _refreshSec=30;
@@ -929,6 +948,78 @@ const _px=[
 async function fetchDirect(url,ms=12000){try{const r=await fetchT(url,ms);if(r.ok)return await r.text();}catch(e){}return null;}
 async function fetchViaProxy(url,ms=15000){for(const mkP of _px){try{const r=await fetchT(mkP(url),ms);if(r.ok){const t=await r.text();if(t&&t.length>2)return t;}}catch(e){}}return null;}
 async function fetchAny(url,ms=15000){return(await fetchDirect(url,ms))||(await fetchViaProxy(url,ms));}
+
+// ── 美股前日收盤 → 台股預測（首頁獨立區塊）──────────────
+const USP_KEY='tw_usp_cache_v1';
+const USP_INDICES=[
+  {sym:'^SOX', nm:'費半',   w:0.40},
+  {sym:'^IXIC',nm:'那斯達克',w:0.25},
+  {sym:'^GSPC',nm:'S&P 500',w:0.20},
+  {sym:'^DJI', nm:'道瓊',   w:0.15},
+];
+async function fetchUSIndex(sym){
+  const url='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=10d&includePrePost=false';
+  const r=await fetchWithProxy(url);
+  const j=await r.json();
+  const res=j.chart?.result?.[0];
+  const closes=(res?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
+  if(closes.length<2)throw new Error(sym+' 無資料');
+  const ts=res.timestamp||[];
+  const last=closes[closes.length-1],prev=closes[closes.length-2];
+  const lastDate=ts.length?new Date(ts[ts.length-1]*1000):new Date();
+  return{chg:(last-prev)/prev*100,close:last,dateStr:lastDate.toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})};
+}
+function uspVerdict(score){
+  if(score>=1.2) return{txt:'強勢偏多',emo:'🔥',cls:'usp-up',  desc:'美股大漲，台股開高機率高'};
+  if(score>=0.4) return{txt:'偏多',    emo:'📈',cls:'usp-up',  desc:'美股收紅，台股偏多看待'};
+  if(score>-0.4) return{txt:'中性震盪',emo:'➖',cls:'usp-flat',desc:'美股平盤，台股料區間整理'};
+  if(score>-1.2) return{txt:'偏空',    emo:'📉',cls:'usp-dn',  desc:'美股收黑，台股恐開低'};
+  return{txt:'強勢偏空',emo:'⚠️',cls:'usp-dn',desc:'美股重挫，注意台股賣壓'};
+}
+async function loadUSPredict(force){
+  const wrap=document.getElementById('usp-wrap');
+  if(!wrap)return;
+  let cache=null;
+  try{cache=JSON.parse(localStorage.getItem(USP_KEY)||'null');}catch(e){}
+  if(cache&&!force&&Date.now()-cache.at<3*3600*1000){renderUSPredict(cache.data);return;}
+  if(cache)renderUSPredict(cache.data); // 先顯示舊資料再背景更新
+  else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
+  try{
+    const results=await Promise.all(USP_INDICES.map(async ix=>{
+      try{return Object.assign({},ix,await fetchUSIndex(ix.sym));}
+      catch(e){return Object.assign({},ix,{chg:null});}
+    }));
+    const valid=results.filter(r=>r.chg!=null);
+    if(!valid.length)throw new Error('無法取得美股資料');
+    const wSum=valid.reduce((s,r)=>s+r.w,0);
+    const score=valid.reduce((s,r)=>s+r.chg*r.w,0)/wSum;
+    const data={score,dateStr:valid[0].dateStr,indices:results.map(r=>({nm:r.nm,chg:r.chg}))};
+    localStorage.setItem(USP_KEY,JSON.stringify({at:Date.now(),data}));
+    renderUSPredict(data);
+  }catch(e){
+    if(!cache)wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadUSPredict(true)">重試</span></div></div>';
+  }
+}
+function renderUSPredict(d){
+  const wrap=document.getElementById('usp-wrap');
+  if(!wrap)return;
+  const v=uspVerdict(d.score);
+  const pos=Math.max(2,Math.min(98,50+d.score*20)); // ±2.5% 滿刻度
+  const cells=d.indices.map(ix=>{
+    const c=ix.chg==null?'usp-flat':ix.chg>0.05?'usp-up':ix.chg<-0.05?'usp-dn':'usp-flat';
+    const t=ix.chg==null?'—':(ix.chg>0?'+':'')+ix.chg.toFixed(2)+'%';
+    return '<div class="usp-idx"><div class="nm">'+ix.nm+'</div><div class="chg '+c+'">'+t+'</div></div>';
+  }).join('');
+  wrap.innerHTML='<div class="usp-card">'
+    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
+    +'<div class="usp-idx-row">'+cells+'</div>'
+    +'<div class="usp-gauge"><div class="usp-marker" style="left:calc('+pos+'% - 1px)"></div></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
+    +'<div class="usp-verdict"><div class="txt '+v.cls+'">'+v.emo+' '+v.txt+'</div><div class="sub">加權指標 '+(d.score>0?'+':'')+d.score.toFixed(2)+'</div></div>'
+    +'<div style="font-size:11px;color:var(--sub);margin-top:4px">'+v.desc+'</div>'
+    +'<div class="usp-note">依前一交易日美股四大指數加權估算今日台股開盤傾向（費半 40%・那指 25%・S&P 20%・道瓊 15%），僅供參考，非投資建議。</div>'
+    +'</div>';
+}
 
 // ── TWSE MIS API — no proxy needed, works on iPhone ────────
 // Batch fetch current prices for multiple codes
