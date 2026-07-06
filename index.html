@@ -922,6 +922,9 @@ async function reqNotifPerm(){if(!('Notification'in window)){showToast('此瀏�
 function setNotifGranted(){const btn=document.getElementById('notif-btn');if(btn){btn.textContent='🔔 通知開';btn.className='notif-btn ok';}}
 function checkSignalAlert(h,sigs){if(!h.signalAlert||!sigs.length)return null;const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&monitorOn){if(Date.now()>=nextRefreshAt)runMonitorCycle().then(scheduleNext);}});
+// 回到 App／喚醒畫面時，自動更新「美股收盤→台股預測」（30分鐘內用快取，不重複抓）
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')loadUSPredict();});
+window.addEventListener('pageshow',e=>{if(e.persisted)loadUSPredict();});
 
 // ── Tabs ──────────────────────────────────────────────────────
 function switchTab(t){['portfolio','alerts','analysis','fundamental'].forEach((id,i)=>{document.querySelectorAll('.tab')[i].classList.toggle('active',id===t);document.getElementById('sec-'+id).classList.toggle('active',id===t);});if(t==='portfolio')renderPortfolio();if(t==='alerts'){renderAlertLog();renderPotentialStocks();}if(t==='analysis'){renderPortfolioScores();refreshScores().then(()=>{renderPortfolioScores();renderPortfolio();});}if(t==='fundamental')renderKlineSection();}
@@ -964,10 +967,29 @@ const USP_INDICES=[
   {sym:'^GSPC',nm:'S&P 500',w:0.20},
   {sym:'^DJI', nm:'道瓊',   w:0.15},
 ];
+const USP_PROXIES=[
+  u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+  u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+  u=>'https://corsproxy.io/?'+encodeURIComponent(u),
+  u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
+];
+async function fetchUSJson(url){
+  for(const mk of USP_PROXIES){
+    try{
+      const r=await fetchT(mk(url),10000);
+      if(!r.ok)continue;
+      const t=await r.text();
+      const j=JSON.parse(t);
+      if(j&&j.chart&&j.chart.result&&j.chart.result[0])return j; // 驗證內容有效才採用
+    }catch(e){}
+  }
+  throw new Error('US fetch failed');
+}
 async function fetchUSIndex(sym){
-  const url='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=10d&includePrePost=false';
-  const r=await fetchWithProxy(url);
-  const j=await r.json();
+  const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=10d&includePrePost=false';
+  let j=null;
+  try{j=await fetchUSJson('https://query1.finance.yahoo.com'+q);}
+  catch(e){j=await fetchUSJson('https://query2.finance.yahoo.com'+q);}
   const res=j.chart?.result?.[0];
   const closes=(res?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
   if(closes.length<2)throw new Error(sym+' 無資料');
@@ -983,13 +1005,14 @@ function uspVerdict(score){
   if(score>-1.2) return{txt:'偏空',    emo:'📉',cls:'usp-dn',  desc:'美股收黑，台股恐開低'};
   return{txt:'強勢偏空',emo:'⚠️',cls:'usp-dn',desc:'美股重挫，注意台股賣壓'};
 }
+let _uspRetry=0;
 async function loadUSPredict(force){
   const wrap=document.getElementById('usp-wrap');
   if(!wrap)return;
   let cache=null;
   try{cache=JSON.parse(localStorage.getItem(USP_KEY)||'null');}catch(e){}
-  if(cache&&!force&&Date.now()-cache.at<3*3600*1000){renderUSPredict(cache.data);return;}
-  if(cache)renderUSPredict(cache.data); // 先顯示舊資料再背景更新
+  if(cache&&!force&&Date.now()-cache.at<30*60*1000){renderUSPredict(cache.data);return;}
+  if(cache)renderUSPredict(cache.data,true); // 先顯示舊資料(標示更新中)再背景更新
   else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
   try{
     const results=await Promise.all(USP_INDICES.map(async ix=>{
@@ -1002,14 +1025,18 @@ async function loadUSPredict(force){
     const score=valid.reduce((s,r)=>s+r.chg*r.w,0)/wSum;
     const data={score,dateStr:valid[0].dateStr,indices:results.map(r=>({nm:r.nm,chg:r.chg}))};
     localStorage.setItem(USP_KEY,JSON.stringify({at:Date.now(),data}));
+    _uspRetry=0;
     renderUSPredict(data);
   }catch(e){
+    if(cache)renderUSPredict(cache.data,false,true); // 更新失敗→顯示快取並標示
+    if(_uspRetry<3){_uspRetry++;setTimeout(()=>loadUSPredict(true),30000);} // 30秒後自動重試
     if(!cache)wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadUSPredict(true)">重試</span></div></div>';
   }
 }
-function renderUSPredict(d){
+function renderUSPredict(d,updating,stale){
   const wrap=document.getElementById('usp-wrap');
   if(!wrap)return;
+  const badge=updating?' <span style="color:var(--sub)">更新中…</span>':(stale?' <span style="color:#f59e0b">快取</span>':'');
   const v=uspVerdict(d.score);
   const pos=Math.max(2,Math.min(98,50+d.score*20)); // ±2.5% 滿刻度
   const cells=d.indices.map(ix=>{
@@ -1018,7 +1045,7 @@ function renderUSPredict(d){
     return '<div class="usp-idx"><div class="nm">'+ix.nm+'</div><div class="chg '+c+'">'+t+'</div></div>';
   }).join('');
   wrap.innerHTML='<div class="usp-card">'
-    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
+    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+badge+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
     +'<div class="usp-idx-row">'+cells+'</div>'
     +'<div class="usp-gauge"><div class="usp-marker" style="left:calc('+pos+'% - 1px)"></div></div>'
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
