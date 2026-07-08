@@ -559,8 +559,8 @@ function detectAIProvider(key){
   if(!key)return null;
   if(key.startsWith('sk-ant-'))return'claude';
   if(key.startsWith('sk-'))return'openai';
-  if(key.startsWith('AIza'))return'gemini';
-  return null;
+  // Gemini key 格式多樣（AIza、AQ. 等），不設限：非前兩者一律當 Gemini 嘗試
+  return'gemini';
 }
 function aiProviderLabel(key){
   const p=detectAIProvider(key);
@@ -596,7 +596,7 @@ function saveAIKey(){
 }
 async function callAI(key,prompt){
   const p=detectAIProvider(key);
-  if(!p)throw new Error('無法識別 API Key 格式（需 sk-ant- / sk- / AIza 開頭）');
+  if(!p)throw new Error('尚未設定 AI API Key');
   if(p==='claude'){
     const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
     const j=await r.json();if(!r.ok)throw new Error(j.error?.message||'Claude API 錯誤 '+r.status);
@@ -1872,7 +1872,7 @@ init();
     <h3>🤖 AI 深度分析設定</h3>
     <div class="form-group">
       <label>AI API Key <span id="ai-provider-badge" style="font-size:11px;font-weight:600;margin-left:6px"></span></label>
-      <input id="ai-key-inp" type="password" placeholder="sk-ant-… / sk-… / AIza…" style="font-size:12px" oninput="updateAIProviderBadge(this.value.trim())">
+      <input id="ai-key-inp" type="password" placeholder="sk-ant-… / sk-… / AIza… / AQ.…" style="font-size:12px" oninput="updateAIProviderBadge(this.value.trim())">
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal('modal-ai-key')">取消</button>
@@ -1882,7 +1882,7 @@ init();
       💡 API Key 僅存在本機，不會上傳。自動辨別：<br>
       🟣 <b>Claude</b>：<code>sk-ant-</code> 開頭<br>
       🟢 <b>ChatGPT</b>：<code>sk-</code> 開頭（含 <code>sk-proj-</code>）<br>
-      🔵 <b>Gemini</b>：<code>AIza</code> 開頭（自動偵測可用版本 2.5 / 2.0 / 1.5）
+      🔵 <b>Gemini</b>：<code>AIza</code>、<code>AQ.</code> 等其他格式（自動偵測可用版本 2.5 / 2.0 / 1.5）
     </div>
   </div>
 </div>
