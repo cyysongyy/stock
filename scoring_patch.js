@@ -34,6 +34,12 @@
    1. Fetch 工具
    ════════════════════════════════════════════════ */
 
+// 讀當前使用者的持股（多使用者命名空間由 index.html 的 KEY_HOLD 決定）
+function _spHoldings() {
+  try { if (typeof holdings !== 'undefined' && Array.isArray(holdings)) return holdings; } catch(e) {}
+  try { return JSON.parse(localStorage.getItem(typeof KEY_HOLD !== 'undefined' ? KEY_HOLD : 'tw_holdings') || '[]'); } catch(e) { return []; }
+}
+
 async function _yFetch(url) {
   // 直接 fetch + allorigins fallback
   // 注意：iOS 15 不支援 AbortSignal.timeout()，改用 AbortController + setTimeout
@@ -403,7 +409,7 @@ async function renderTechAnalysis() {
   // 讀持股
   let holdings = [];
   try {
-    holdings = JSON.parse(localStorage.getItem('tw_holdings') || localStorage.getItem('holdings') || '[]');
+    holdings = _spHoldings();
   } catch(e) {}
   if (!Array.isArray(holdings) || !holdings.length) {
     wrap.innerHTML = '<div style="padding:20px;text-align:center;color:#888">尚未新增持股</div>';
@@ -744,7 +750,7 @@ function _injectPortfolioNames() {
       setTimeout(_injectPortfolioNames, 60);
       // 背景從 TWSE 更新名稱
       try {
-        const holdings = JSON.parse(localStorage.getItem('tw_holdings') || '[]');
+        const holdings = _spHoldings();
         const codes = holdings
           .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
           .filter(Boolean);
@@ -757,7 +763,7 @@ function _injectPortfolioNames() {
   // 頁面載入後也補一次（處理 renderPortfolio 在 patch 前就執行的情況）
   window.addEventListener('load', () => setTimeout(async () => {
     try {
-      const holdings = JSON.parse(localStorage.getItem('tw_holdings') || '[]');
+      const holdings = _spHoldings();
       const codes = holdings
         .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
         .filter(Boolean);
@@ -779,8 +785,7 @@ function _injectPortfolioNames() {
 function _patchTargetBars() {
   let holdingMap = {};
   try {
-    JSON.parse(localStorage.getItem('tw_holdings') || '[]')
-      .forEach(h => { holdingMap[h.code] = h; });
+    _spHoldings().forEach(h => { holdingMap[h.code] = h; });
   } catch(e) {}
 
   // ── 情境 A：detail-panel 內的 .target-strip ──
@@ -887,7 +892,7 @@ async function fetchLiveAndRender() {
     _toast.textContent = '⏳ 更新股價中…';
     document.body.appendChild(_toast);
 
-    const holdings = JSON.parse(localStorage.getItem('tw_holdings') || '[]');
+    const holdings = _spHoldings();
     const codes = holdings
       .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
       .filter(Boolean);
