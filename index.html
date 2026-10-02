@@ -1466,6 +1466,16 @@ async function fetchTWSEPrices(codes){
       if(r.ok){const j=await r.json();(j.msgArray||[]).forEach(s=>{const price=parseFloat(s.z)||parseFloat(s.y)||null;const prev=parseFloat(s.y)||null;const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;const chgPct=price&&prev?((price-prev)/prev*100):null;if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};});}
     }catch(e){}
   }
+  // Final fallback: Yahoo Finance + CORS-proxied TWSE/TPEx (scoring_patch.js),
+  // for codes the direct MIS call still couldn't resolve (e.g. blocked/rate-limited,
+  // or newly-listed active ETFs not yet in a fresh MIS session)
+  const stillMissing=codes.filter(c=>!prices[c]);
+  if(stillMissing.length&&typeof _fetchYahooPrices==='function'){
+    try{
+      const fb=await _fetchYahooPrices(stillMissing);
+      Object.assign(prices,fb);
+    }catch(e){}
+  }
   return prices;
 }
 

@@ -880,37 +880,11 @@ function _patchTargetBars() {
   }
 })();
 
-/* ── fetchLiveAndRender 供 Section 0 調用 ── */
-async function fetchLiveAndRender() {
-  let _toast = null;
-  try {
-    // 顯示進度 toast（debug 用，5 秒後消失）
-    _toast = document.createElement('div');
-    _toast.style.cssText = 'position:fixed;bottom:70px;left:50%;transform:translateX(-50%);'
-      + 'background:#1565c0dd;color:#fff;padding:6px 14px;border-radius:20px;'
-      + 'font-size:12px;z-index:99999;pointer-events:none;white-space:nowrap';
-    _toast.textContent = '⏳ 更新股價中…';
-    document.body.appendChild(_toast);
-
-    const holdings = _spHoldings();
-    const codes = holdings
-      .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
-      .filter(Boolean);
-    if (!codes.length) { _toast.textContent = '⚠️ 無持股'; return; }
-
-    const prices = await _fetchYahooPrices(codes);
-    const n = Object.keys(prices).length;
-    _toast.textContent = n > 0
-      ? `✅ 更新 ${n}/${codes.length} 支 @ ${new Date().toLocaleTimeString('zh-TW',{hour12:false})}`
-      : `❌ 無法取得報價（${codes.length} 支）`;
-    _toast.style.background = n > 0 ? '#2e7d32dd' : '#c62828dd';
-
-    if (typeof renderPortfolio === 'function') {
-      try { await renderPortfolio(); } catch(e) {}
-    }
-  } catch(e) {
-    if (_toast) _toast.textContent = '❌ 錯誤: ' + e.message;
-  } finally {
-    if (_toast) setTimeout(() => { try { _toast.remove(); } catch(e){} }, 6000);
-  }
-}
+/* ── 注意：不要在此定義 fetchLiveAndRender ──
+   index.html 已定義全域的 fetchLiveAndRender()，供刷新按鈕／30秒自動刷新／
+   初始載入共用，其內部呼叫 fetchTWSEPrices()，而 fetchTWSEPrices() 在抓不到
+   報價時會自動 fallback 到本檔案的 _fetchYahooPrices()（見下方）。
+   曾經在這裡用同名函式覆蓋 index.html 的版本，但因為沒有把抓到的資料組成
+   dataMap 傳給 renderPortfolio()，導致訊號/K線資料遺失，且每次刷新都重複
+   跑一次很慢的多重 proxy fallback，因此移除，改由 fetchTWSEPrices() 統一
+   呼叫 _fetchYahooPrices() 作為最後備援。 */
