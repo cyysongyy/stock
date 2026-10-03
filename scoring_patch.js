@@ -356,7 +356,14 @@ function _condRow(item) {
 
 function _card(holding, result, rank) {
   const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
-  const name = holding.name || holding.n || code || '—';
+  let name = holding.name || holding.n || '';
+  if (!name) {
+    try {
+      const pc = (typeof priceCache !== 'undefined' ? priceCache : {});
+      name = pc[code + '.TW']?.name || pc[code]?.name || '';
+    } catch (e) {}
+  }
+  name = name || code || '—';
   const v = _verdict(result.total, result.metCount);
   const rc = _rankColor(rank);
   const metStr = `${result.metCount}/5 條件成立`;
@@ -368,7 +375,7 @@ function _card(holding, result, rank) {
           <div style="width:14px;height:14px;border-radius:50%;background:${rc.dot};flex-shrink:0"></div>
           <div>
             <div style="font-size:15px;font-weight:700;color:#e0e0e0">${code}
-              <span style="font-size:11px;color:#aaa;font-weight:400"> ${name}</span>
+              ${name!==code?`<span style="font-size:11px;color:#aaa;font-weight:400"> ${name}</span>`:''}
             </div>
             <div style="font-size:11px;color:${rc.dot};margin-top:2px">${rc.label} &nbsp;
               <span style="color:${v.color};font-size:10px">${v.text}</span>
@@ -522,18 +529,27 @@ async function _fetchYahooPrices(codes) {
   const prices = {};
   const today = new Date().toLocaleDateString('zh-TW');
 
-  /* ── 方法1: Yahoo Finance v8 chart API（讀 meta.regularMarketPrice）── */
-  // v8 chart 的 meta 欄位包含即時成交價，已確認 proxy 可用
+  /* ── 方法1: Yahoo Finance v8 chart API（讀 meta.regularMarketPrice，
+     缺值時改讀歷史收盤序列最後一筆 —— 冷門ETF常有 meta 即時欄位是空的，
+     但 indicators.quote[0].close 仍有正常的歷史收盤價，分析頁的K線圖
+     走的正是這條路，才會抓到價格而庫存頁抓不到）── */
   async function _yahooLivePrice(code) {
     const suffixes = ['.TW', '.TWO'];
     for (const suf of suffixes) {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suf}?interval=1d&range=2d`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suf}?interval=1d&range=10d`;
       const data = await _yFetch(url);
       const result = data?.chart?.result?.[0];
       if (!result) continue;
       const meta = result.meta || {};
-      const price = meta.regularMarketPrice || meta.previousClose || null;
-      const prev  = meta.chartPreviousClose || meta.previousClose || null;
+      let price = meta.regularMarketPrice || meta.previousClose || null;
+      let prev  = meta.chartPreviousClose || meta.previousClose || null;
+      if (!price) {
+        const closes = (result.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+        if (closes.length) {
+          price = closes[closes.length - 1];
+          prev  = closes.length > 1 ? closes[closes.length - 2] : null;
+        }
+      }
       if (price) {
         prices[code] = {
           price:   +price.toFixed(2),
