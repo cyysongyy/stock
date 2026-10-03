@@ -1862,7 +1862,20 @@ async function aiAnalyzeSingle(code,idx){
     // update badge in row
     const row=panel.previousElementSibling;
     if(row){const badgeWrap=row.querySelector('.hr-sname')?.parentElement;if(badgeWrap){const old=badgeWrap.querySelector('span[style*="border-radius:4px"]');if(old)old.remove();badgeWrap.insertAdjacentHTML('beforeend',aiVerdictHTML(code));}}
-  }catch(e){showToast('分析失敗：'+e.message,'err');if(panel){const btn=panel.querySelector('button');if(btn){btn.textContent='🤖 AI 深度分析此股';btn.disabled=false;}}}
+  }catch(e){
+    showToast('分析失敗：'+e.message,6000);
+    if(panel){
+      const btn=panel.querySelector('button');
+      if(btn){btn.textContent='🤖 AI 深度分析此股';btn.disabled=false;}
+      // A toast fades on its own — show the actual error inline too, persisting
+      // until the next attempt, so a flash the user missed doesn't look like
+      // "nothing happened" (this hid a real failure before: the duration here
+      // used to be the string 'err', which setTimeout coerces to a ~0ms delay).
+      let errBox=panel.querySelector('.ai-err-box');
+      if(!errBox){errBox=document.createElement('div');errBox.className='ai-err-box';errBox.style.cssText='margin:8px 0;padding:10px;background:#ff475711;border:1px solid #ff475744;border-radius:8px;font-size:11px;color:var(--red)';panel.insertBefore(errBox,btn?btn.parentElement:panel.firstChild);}
+      errBox.textContent='⚠️ AI 分析失敗：'+e.message;
+    }
+  }
 }
 function toggleDetail(i){
   openDetailIdx=openDetailIdx===i?-1:i;
