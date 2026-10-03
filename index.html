@@ -815,21 +815,23 @@ async function scanAllWithAI(){
   if(!holdings.length){showToast('尚無持股');return;}
   const btn=document.getElementById('ai-scan-btn');
   if(btn){btn.textContent='⏳ 分析中…';btn.disabled=true;}
-  let done=0;
+  let done=0,ok=0;const failCodes=[];
   for(const h of holdings){
     const code=h.code.replace('.TW','');
-    const sym=code+'.TW';
     try{
       const data=await fetchYahoo(code);
       await aiAnalyzeOne(code,data);
-    }catch(e){aiCache[code]={verdict:'hold',text:'無法取得資料：'+e.message,ts:Date.now()};}
+      ok++;
+    }catch(e){failCodes.push(code);}
     done++;
     if(btn)btn.textContent=`⏳ ${done}/${holdings.length}`;
     await new Promise(r=>setTimeout(r,400));
   }
   if(btn){btn.textContent='🤖 AI 掃描庫存';btn.disabled=false;}
   await fetchLiveAndRender();
-  showToast('🤖 AI 分析完成 ✅');
+  if(ok===0)showToast('⚠️ AI 掃描失敗，無法取得任何股票資料，請稍後再試',8000);
+  else if(failCodes.length)showToast(`🤖 AI 分析完成 ${ok}/${holdings.length}（失敗：${failCodes.join(',')}）`,8000);
+  else showToast('🤖 AI 分析完成 ✅');
 }
 async function aiAnalyzeStock(){
   const key=localStorage.getItem(KEY_AI);
@@ -1539,6 +1541,7 @@ async function fetchTWSEPrices(codes){
 
 // ── Yahoo Finance — for chart/analysis tabs ──────────────────
 const PROXIES=[
+  u=>u, // Yahoo's public quote/chart endpoints often allow direct cross-origin GET — try before any proxy
   u=>'https://corsproxy.io/?'+encodeURIComponent(u),
   u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
   u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
