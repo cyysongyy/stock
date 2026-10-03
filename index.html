@@ -1190,7 +1190,7 @@ async function fetchLiveAndRender(){
   const twsePrices=await fetchTWSEPrices(codes);
   if(Object.keys(twsePrices).length===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 備援:${d.fallback||'—'}`,8000);
+    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}`,8000);
   }
   // Merge into priceCache
   Object.assign(priceCache,twsePrices);
@@ -1441,6 +1441,41 @@ function renderUSPredict(d,updating,stale){
     +'</div>';
 }
 
+// ── TWSE/TPEx Open Data API — official public endpoints, real CORS,
+// no proxy and no session cookie needed. End-of-day only. ──────────
+async function fetchOpenAPIPrices(codes){
+  const prices={};
+  const want=new Set(codes);
+  try{
+    const r=await fetchT('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',10000);
+    if(r.ok){
+      const arr=await r.json();
+      (arr||[]).forEach(s=>{
+        if(!want.has(s.Code))return;
+        const p=parseFloat((s.ClosingPrice||'').replace(/,/g,''))||null;
+        const o=parseFloat((s.OpeningPrice||'').replace(/,/g,''))||null;
+        if(p)prices[s.Code]={price:p,chgPct:(o&&o>0)?((p-o)/o*100):null,name:s.Name||s.Code,date:new Date().toLocaleDateString('zh-TW')};
+      });
+    }
+  }catch(e){}
+  const missing=codes.filter(c=>!prices[c]);
+  if(missing.length){
+    const wantOtc=new Set(missing);
+    try{
+      const r=await fetchT('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',10000);
+      if(r.ok){
+        const arr=await r.json();
+        (arr||[]).forEach(s=>{
+          const code=s.SecuritiesCompanyCode;
+          if(!wantOtc.has(code))return;
+          const p=parseFloat((s.Close||'').replace(/,/g,''))||null;
+          if(p)prices[code]={price:p,chgPct:null,name:s.CompanyName||code,date:new Date().toLocaleDateString('zh-TW')};
+        });
+      }
+    }catch(e){}
+  }
+  return prices;
+}
 // ── TWSE MIS API — no proxy needed, works on iPhone ────────
 // Batch fetch current prices for multiple codes
 async function fetchTWSEPrices(codes){
@@ -1473,8 +1508,20 @@ async function fetchTWSEPrices(codes){
       else dbg.otc='失敗: HTTP '+r.status;
     }catch(e){dbg.otc='失敗: '+e.message;}
   }
+  // TWSE/TPEx official Open Data API — reliable fallback for whatever MIS missed.
+  // Unlike mis.twse.com.tw (which can silently return nothing without a warmed-up
+  // session cookie — a cookie cross-site fetch can't rely on under Safari's
+  // tracking prevention anyway), these endpoints are published for public,
+  // cross-origin use and respond with real CORS headers on a plain fetch —
+  // no proxy, no cookies. Only end-of-day data, but far better than "—".
+  const afterOtc=codes.filter(c=>!prices[c]);
+  if(afterOtc.length){
+    const op=await fetchOpenAPIPrices(afterOtc);
+    dbg.openapi='ok ('+Object.keys(op).length+'/'+afterOtc.length+' 筆)';
+    Object.assign(prices,op);
+  }
   // Final fallback: Yahoo Finance + CORS-proxied TWSE/TPEx (scoring_patch.js),
-  // for codes the direct MIS call still couldn't resolve (e.g. blocked/rate-limited,
+  // for codes nothing else could resolve (e.g. blocked/rate-limited,
   // or newly-listed active ETFs not yet in a fresh MIS session)
   const stillMissing=codes.filter(c=>!prices[c]);
   if(stillMissing.length&&typeof _fetchYahooPrices==='function'){
