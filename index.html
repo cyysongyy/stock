@@ -1181,16 +1181,20 @@ function showApp(name){
     }else{_refreshSec=30;if(cd)cd.textContent='';}
   },1000);
 }
-async function fetchLiveAndRender(){
+async function fetchLiveAndRender(manual){
   const pill=document.getElementById('monitor-pill');
   if(pill)pill.style.opacity='0.6';
   if(!holdings.length&&!watchlist.length)return;
   // Use TWSE direct API for current prices (works on iPhone without proxy)
   const codes=[...new Set([...holdings.map(h=>h.code.replace('.TW','')),...watchlist.map(w=>w.code)])];
   const twsePrices=await fetchTWSEPrices(codes);
-  if(Object.keys(twsePrices).length===0&&codes.length){
+  const resolvedCount=Object.keys(twsePrices).length;
+  if(resolvedCount===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
     showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}`,8000);
+  }else if(manual&&resolvedCount<codes.length){
+    const d=window._lastPriceFetchDebug||{};
+    showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}`,8000);
   }
   // Merge into priceCache
   Object.assign(priceCache,twsePrices);
@@ -1478,35 +1482,45 @@ async function fetchOpenAPIPrices(codes){
 }
 // ── TWSE MIS API — no proxy needed, works on iPhone ────────
 // Batch fetch current prices for multiple codes
+// TWSE MIS is known to silently truncate/omit entries when a single request
+// joins too many ex_ch symbols together — split into small chunks and fetch
+// them in parallel instead of one big combined query.
+async function fetchMisChunked(mkt,codeList,chunkSize){
+  chunkSize=chunkSize||4;
+  const chunks=[];
+  for(let i=0;i<codeList.length;i+=chunkSize)chunks.push(codeList.slice(i,i+chunkSize));
+  const prices={};
+  let count=0;const errs=[];
+  await Promise.all(chunks.map(async chunk=>{
+    const exch=chunk.map(c=>mkt+'_'+c+'.tw').join('|');
+    try{
+      const r=await fetchT('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0',8000);
+      if(!r.ok){errs.push('HTTP '+r.status);return;}
+      const j=await r.json();
+      count+=(j.msgArray||[]).length;
+      (j.msgArray||[]).forEach(s=>{
+        const price=parseFloat(s.z)||parseFloat(s.y)||null;
+        const prev=parseFloat(s.y)||null;
+        const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
+        const chgPct=price&&prev?((price-prev)/prev*100):null;
+        if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
+      });
+    }catch(e){errs.push(e.message);}
+  }));
+  return{prices,count,errs};
+}
 async function fetchTWSEPrices(codes){
-  // Build ex_ch list: try tse first, otc as fallback
-  const exch=codes.map(c=>'tse_'+c+'.tw').join('|');
-  const url='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0';
   const prices={};
   const dbg=window._lastPriceFetchDebug={at:new Date().toLocaleTimeString('zh-TW',{hour12:false})};
-  try{
-    const r=await fetchT(url,8000);
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const j=await r.json();
-    dbg.tse='ok ('+(j.msgArray||[]).length+' 筆)';
-    (j.msgArray||[]).forEach(s=>{
-      const code=s.c;
-      const price=parseFloat(s.z)||parseFloat(s.y)||null;
-      const prev=parseFloat(s.y)||null;
-      const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
-      const chgPct=price&&prev?((price-prev)/prev*100):null;
-      if(price)prices[code]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
-    });
-  }catch(e){dbg.tse='失敗: '+e.message;console.warn('TWSE fetch failed:',e.message);}
+  const tse=await fetchMisChunked('tse',codes);
+  Object.assign(prices,tse.prices);
+  dbg.tse=tse.errs.length?('部分失敗('+tse.errs.join(',')+') ok '+tse.count+' 筆'):('ok ('+tse.count+' 筆)');
   // Try OTC for any not found
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
-    const exchOtc=missing.map(c=>'otc_'+c+'.tw').join('|');
-    try{
-      const r=await fetchT('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exchOtc)+'&json=1&delay=0',8000);
-      if(r.ok){const j=await r.json();dbg.otc='ok ('+(j.msgArray||[]).length+' 筆)';(j.msgArray||[]).forEach(s=>{const price=parseFloat(s.z)||parseFloat(s.y)||null;const prev=parseFloat(s.y)||null;const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;const chgPct=price&&prev?((price-prev)/prev*100):null;if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};});}
-      else dbg.otc='失敗: HTTP '+r.status;
-    }catch(e){dbg.otc='失敗: '+e.message;}
+    const otc=await fetchMisChunked('otc',missing);
+    Object.assign(prices,otc.prices);
+    dbg.otc=otc.errs.length?('部分失敗('+otc.errs.join(',')+') ok '+otc.count+' 筆'):('ok ('+otc.count+' 筆)');
   }
   // TWSE/TPEx official Open Data API — reliable fallback for whatever MIS missed.
   // Unlike mis.twse.com.tw (which can silently return nothing without a warmed-up
@@ -1532,6 +1546,8 @@ async function fetchTWSEPrices(codes){
     }catch(e){dbg.fallback='失敗: '+e.message;}
   }
   dbg.total=Object.keys(prices).length+'/'+codes.length;
+  const unresolved=codes.filter(c=>!prices[c]);
+  dbg.missing=unresolved.length?unresolved.join(','):null;
   return prices;
 }
 
@@ -1699,7 +1715,7 @@ async function renderPortfolio(liveDataMap){
       </div>
       ${assetHist.length>=2?`<div class="asset-trend"><div class="at-head"><span class="at-title">📈 資產走勢（${assetHist.length} 日）</span></div><div style="position:relative;height:110px"><canvas id="chart-assets"></canvas></div></div>`:''}
       <div class="ov-actions">
-        <div class="ov-btn" onclick="fetchLiveAndRender()" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
+        <div class="ov-btn" onclick="fetchLiveAndRender(true)" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
         <div class="ov-btn" onclick="exportData()">📤 匯出</div>
         <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}">🤖 AI 掃描庫存</div>
         <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
