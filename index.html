@@ -129,10 +129,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 /* ── Holdings Table ── */
 .holdings-wrap{padding:0}
-.tbl-header{display:grid;grid-template-columns:1fr 36px 72px 70px 80px;padding:8px 14px;background:var(--card2);border-bottom:1px solid var(--border)}
+.tbl-header{display:grid;grid-template-columns:1fr 44px 64px 70px 80px;padding:8px 14px;background:var(--card2);border-bottom:1px solid var(--border)}
 .tbl-header span{font-size:10px;color:var(--sub);font-weight:600;text-transform:uppercase}
 .tbl-header span:not(:first-child){text-align:right}
-.holding-row{display:grid;grid-template-columns:1fr 36px 72px 70px 80px;padding:12px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center}
+.holding-row{display:grid;grid-template-columns:1fr 44px 64px 70px 80px;padding:12px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center}
 .holding-row:hover,.holding-row:active{background:var(--card2)}
 .hr-code{font-size:13px;font-weight:700;margin-bottom:1px;letter-spacing:.3px}
 .hr-sname{font-size:10px;color:var(--sub);margin-bottom:0}
@@ -295,12 +295,12 @@ select option{background:var(--card2);color:var(--text)}
 
 .tbl-header .th-sig{text-align:center;font-size:8px}
 .hr-sig{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer}
-.sig-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;cursor:pointer}
+.sig-dot{width:13px;height:13px;border-radius:50%;flex-shrink:0;cursor:pointer}
 .sig-dot.green{background:#00c853;box-shadow:0 0 7px #00c85388}
 .sig-dot.yellow{background:#ffd700;box-shadow:0 0 7px #ffd70088}
 .sig-dot.red{background:#ff4757;box-shadow:0 0 7px #ff475788}
 .sig-dot.grey{background:var(--border)}
-.sig-label{font-size:8px;font-weight:700;white-space:nowrap;line-height:1}
+.sig-label{font-size:12px;font-weight:700;white-space:nowrap;line-height:1}
 .sig-label.green{color:#00c853}
 .sig-label.yellow{color:#ffd700}
 .sig-label.red{color:#ff4757}
@@ -1735,7 +1735,7 @@ async function renderPortfolio(liveDataMap){
     // Target/stop progress bars
     const tpBars=(()=>{if(!curr)return'';let out='';if(h.target&&h.target>h.cost){const pct=Math.min(100,Math.round((curr-h.cost)/(h.target-h.cost)*100));out+=`<div class="tp-bar-row">🎯<div class="tp-bar-track"><div class="tp-bar-fill target" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.target}</div>`;}if(h.stop&&h.stop<h.cost){const pct=Math.min(100,Math.round((h.cost-curr)/(h.cost-h.stop)*100));const cls=pct>70?'color:#ff4757':'';out+=`<div class="tp-bar-row" style="${cls}">🛑<div class="tp-bar-track"><div class="tp-bar-fill stop" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.stop}</div>`;}return out?`<div class="tp-bar-wrap">${out}</div>`:'';})();
     return`
-      <div class="holding-row" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 36px 72px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
+      <div class="holding-row" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 44px 64px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
         <div>
           <div class="hr-code">${h.code.replace('.TW','')}</div>
           <div class="hr-sname">${(()=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';return h.name||priceCache[sym]?.name||priceCache[h.code]?.name||'';})()} </div>
