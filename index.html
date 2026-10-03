@@ -390,10 +390,6 @@ select option{background:var(--card2);color:var(--text)}
 .ul-badge{font-size:9px;color:var(--blue);border:1px solid var(--blue)44;border-radius:10px;padding:2px 7px}
 .ul-del{background:none;border:none;color:var(--sub);font-size:13px;cursor:pointer;padding:2px 4px}
 .ul-del:hover{color:var(--red)}
-/* Asset trend */
-.asset-trend{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
-.asset-trend .at-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.asset-trend .at-title{font-size:10px;color:var(--sub);font-weight:600}
 /* IPO */
 .ipo-card{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .ipo-title{font-size:11px;font-weight:700;color:var(--blue);margin-bottom:8px}
@@ -665,7 +661,7 @@ function activeUserName(){return activeUser()?.name||'';}
 
 const KEY_HOLD=_ns('tw_holdings'),KEY_ALERTS=_ns('tw_alerts');
 const KEY_SHEET_URL=_ns('tw_sheet_url'),KEY_SHEET_TOKEN=_ns('tw_sheet_token'),KEY_AI='tw_ai_key';
-const KEY_WATCH=_ns('tw_watchlist'),KEY_TXN=_ns('tw_txns'),KEY_ASSET=_ns('tw_asset_history');
+const KEY_WATCH=_ns('tw_watchlist'),KEY_TXN=_ns('tw_txns');
 let _sheetSyncing=false;
 
 // ── Google Sheet Sync ─────────────────────────────────────────
@@ -980,8 +976,6 @@ let openDetailIdx=-1;
 let aiCache={}; // code → {verdict,text,ts}
 let watchlist=JSON.parse(localStorage.getItem(KEY_WATCH)||'[]'); // [{code,name,added}]
 let txns=JSON.parse(localStorage.getItem(KEY_TXN)||'[]'); // [{ts,date,code,name,side,qty,price,fee,pl}]
-let assetHist=JSON.parse(localStorage.getItem(KEY_ASSET)||'[]'); // [{d,v,c}]
-let chartAssets=null;
 
 // ── 自選股觀察清單 ───────────────────────────────────────────
 function saveWatchlist(){localStorage.setItem(KEY_WATCH,JSON.stringify(watchlist));}
@@ -1122,29 +1116,6 @@ function openTxnModal(){
   document.getElementById('modal-txn').classList.add('open');
 }
 function clearTxns(){if(!confirm('清空所有交易紀錄？（不影響持股）'))return;txns=[];saveTxns();openTxnModal();}
-
-// ── 資產走勢（每日快照）─────────────────────────────────────
-function recordAssetSnapshot(val,cost){
-  if(!val||!cost)return;
-  const d=new Date().toLocaleDateString('zh-TW');
-  const last=assetHist[assetHist.length-1];
-  if(last&&last.d===d){last.v=Math.round(val);last.c=Math.round(cost);}
-  else assetHist.push({d,v:Math.round(val),c:Math.round(cost)});
-  assetHist=assetHist.slice(-180);
-  localStorage.setItem(KEY_ASSET,JSON.stringify(assetHist));
-}
-function renderAssetTrend(){
-  const cvs=document.getElementById('chart-assets');
-  if(!cvs||assetHist.length<2||typeof Chart==='undefined')return;
-  if(chartAssets){chartAssets.destroy();chartAssets=null;}
-  const labels=assetHist.map(a=>a.d.replace(/^\d+\//,''));
-  chartAssets=new Chart(cvs,{type:'line',data:{labels,datasets:[
-    {label:'市值',data:assetHist.map(a=>a.v),borderColor:'#4d9eff',backgroundColor:'#4d9eff22',fill:true,tension:.3,pointRadius:0,borderWidth:1.5},
-    {label:'成本',data:assetHist.map(a=>a.c),borderColor:'#7a86a0',borderDash:[4,3],fill:false,tension:.3,pointRadius:0,borderWidth:1}
-  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false}},
-    scales:{x:{ticks:{color:'#7a86a0',font:{size:8},maxTicksLimit:6},grid:{display:false}},
-      y:{ticks:{color:'#7a86a0',font:{size:8},maxTicksLimit:4,callback:v=>(v/10000).toFixed(0)+'萬'},grid:{color:'#2a2f4544'}}}}});
-}
 
 // ── Setup ─────────────────────────────────────────────────────
 function init(){
@@ -1728,7 +1699,6 @@ async function renderPortfolio(liveDataMap){
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
         </div>
       </div>
-      ${assetHist.length>=2?`<div class="asset-trend"><div class="at-head"><span class="at-title">📈 資產走勢（${assetHist.length} 日）</span></div><div style="position:relative;height:110px"><canvas id="chart-assets"></canvas></div></div>`:''}
       <div class="ov-actions">
         <div class="ov-btn" onclick="fetchLiveAndRender(true)" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
         <div class="ov-btn" onclick="exportData()">📤 匯出</div>
@@ -1736,9 +1706,6 @@ async function renderPortfolio(liveDataMap){
         <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
       </div>
     </div>`;
-  // 有即時資料時記錄每日資產快照
-  if(liveDataMap&&Object.keys(liveDataMap).length&&totalVal>0){recordAssetSnapshot(totalVal,totalCost);}
-  renderAssetTrend();
   const cvs=document.getElementById('chart-donut');
   if(cvs&&typeof Chart!=='undefined'){
     chartDonut=new Chart(cvs,{type:'doughnut',data:{datasets:[{data:totalVal?[totalCost,Math.max(0,totalPL),Math.max(0,-totalPL)]:[1,0,0],backgroundColor:totalVal?['#4d9eff','#ff4757','#00d68f']:['#2a2f45'],borderWidth:0,cutout:'72%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},animation:{animateRotate:true,duration:600}}});
