@@ -27,6 +27,11 @@
         await fetchLiveAndRender();
       }
     } catch(e) {}
+    // 買點訊號偵測卡片（含中文名稱、首頁訊號點用的 scoreCache）以前只在使用者切到
+    // 分析頁時才抓，App 一開啟就先背景抓好，使用者點進分析頁時資料已經是現成的
+    try {
+      await renderTechAnalysis();
+    } catch(e) {}
   }, 1500);
 })();
 
@@ -551,10 +556,19 @@ async function _fetchYahooPrices(codes) {
         }
       }
       if (price) {
+        // meta.symbol is just the ticker (e.g. "00712.TW") — never show that as
+        // the name, it just duplicates the code. Try the quote endpoint for a
+        // real company/ETF name; leave it blank (not the ticker) if that fails too.
+        let name = '';
+        try {
+          const q = await _yFetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${code}${suf}&fields=longName,shortName`);
+          const qr = q?.quoteResponse?.result?.[0];
+          name = qr?.longName || qr?.shortName || '';
+        } catch (e) {}
         prices[code] = {
           price:   +price.toFixed(2),
           chgPct:  prev ? +((price - prev) / prev * 100).toFixed(2) : null,
-          name:    meta.symbol || code,
+          name,
           date:    today
         };
         return;
