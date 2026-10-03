@@ -1556,13 +1556,17 @@ async function fetchYahoo(symbol){
   const sym=symbol.includes('.')?symbol:symbol+'.TW';
   const chartURL='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=6mo&includePrePost=false';
   const quoteURL='https://query1.finance.yahoo.com/v7/finance/quote?symbols='+encodeURIComponent(sym)+'&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketVolume,fiftyTwoWeekHigh,fiftyTwoWeekLow,trailingPE,epsTrailingTwelveMonths,dividendYield,marketCap,longName,shortName';
-  const[cr,qr]=await Promise.all([fetchWithProxy(chartURL),fetchWithProxy(quoteURL)]);
-  const cj=await cr.json(),qj=await qr.json();
+  // 圖表資料是必要的（算技術指標用），報價資料只是補充欄位（PE/殖利率/公司名）——
+  // 兩者分開失敗，報價端被代理擋掉時不該連圖表資料一起報廢
+  const[cr,qr]=await Promise.allSettled([fetchWithProxy(chartURL),fetchWithProxy(quoteURL)]);
+  if(cr.status!=='fulfilled')throw cr.reason instanceof Error?cr.reason:new Error(String(cr.reason));
+  const cj=await cr.value.json();
+  const qj=qr.status==='fulfilled'?await qr.value.json():null;
   const result=cj.chart?.result?.[0];
   if(!result)throw new Error('找不到「'+symbol+'」');
   const ts=result.timestamp,q=result.indicators.quote[0];
   const dates=ts.map(t=>{const dd=new Date(t*1000);return(dd.getMonth()+1)+'/'+dd.getDate();});
-  return{symbol:sym,dates,open:q.open,high:q.high,low:q.low,close:q.close,volume:q.volume,quote:qj.quoteResponse?.result?.[0]||{},meta:result.meta};
+  return{symbol:sym,dates,open:q.open,high:q.high,low:q.low,close:q.close,volume:q.volume,quote:qj?.quoteResponse?.result?.[0]||{},meta:result.meta};
 }
 
 // ── Indicators ────────────────────────────────────────────────
