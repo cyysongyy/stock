@@ -368,14 +368,10 @@ function _condRow(item) {
 
 function _card(holding, result, rank) {
   const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
-  let name = holding.name || holding.n || '';
-  if (!name) {
-    try {
-      const pc = (typeof priceCache !== 'undefined' ? priceCache : {});
-      name = pc[code + '.TW']?.name || pc[code]?.name || '';
-    } catch (e) {}
-  }
-  name = name || code || '—';
+  // _klName（index.html）才會驗證名稱是不是真的中文字，而不是誤把代碼本身
+  // 當成名稱（例如 OCR 匯入時找不到名稱、曾經退回填入代碼的舊資料）
+  let name = (typeof _klName === 'function') ? _klName(holding, code) : (holding.name || code);
+  name = (name && name !== code) ? name : '';
   const v = _verdict(result.total, result.metCount);
   const rc = _rankColor(rank);
   const metStr = `${result.metCount}/5 條件成立`;
@@ -387,7 +383,7 @@ function _card(holding, result, rank) {
           <div style="width:14px;height:14px;border-radius:50%;background:${rc.dot};flex-shrink:0"></div>
           <div>
             <div style="font-size:15px;font-weight:700;color:#e0e0e0">${code}
-              ${name!==code?`<span style="font-size:11px;color:#aaa;font-weight:400"> ${name}</span>`:''}
+              ${name?`<span style="font-size:11px;color:#aaa;font-weight:400"> ${name}</span>`:''}
             </div>
             <div style="font-size:11px;color:${rc.dot};margin-top:2px">${rc.label} &nbsp;
               <span style="color:${v.color};font-size:10px">${v.text}</span>
