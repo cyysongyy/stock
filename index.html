@@ -1908,6 +1908,16 @@ async function refreshScores(){
   return changed;
 }
 function renderScoreDot(code){
+  // 優先用買點訊號偵測（分析頁，dipCache）——比較即時的買賣訊號；
+  // 分析頁還沒跑過時，退回基本面評分（scoreCache）。兩邊各自的顏色/文字
+  // 都從同一個來源算出，不再混用，避免顏色跟文字對不上
+  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+  if(dc){
+    const labelMap={green:'買入',yellow:'考慮',red:'觀望'};
+    const titleMap={green:'買點訊號：值得買入',yellow:'買點訊號：可考慮買入',red:'買點訊號：暫不考慮'};
+    const shortLabel=labelMap[dc.color]||'—';
+    return'<div class="sig-dot '+dc.color+'" title="'+(titleMap[dc.color]||'')+' ('+dc.total+'分)"></div><div class="sig-label '+dc.color+'">'+shortLabel+'</div>';
+  }
   const sc=scoreCache[code];
   if(!sc)return'<div class="sig-dot grey" title="計算中…"></div><div class="sig-label grey">—</div>';
   const title=sc.total>=80?'適合買入 ✓':sc.total>=60?'可考慮':'暫不建議';

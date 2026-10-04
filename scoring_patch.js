@@ -35,6 +35,13 @@
   }, 1500);
 })();
 
+// 買點訊號偵測（本檔案）寫自己的快取，跟 index.html 的基本面評分 scoreCache
+// 分開存，兩者 total/color 算法不同，共用同一個 key 會互相覆蓋，造成首頁訊號點
+// 的顏色跟文字對不上（顏色用 A 系統的，文字又用 B 系統的門檻重算）
+let dipCache = (function () {
+  try { return JSON.parse(localStorage.getItem('tw_dip_cache') || '{}'); } catch (e) { return {}; }
+})();
+
 /* ════════════════════════════════════════════════
    1. Fetch 工具
    ════════════════════════════════════════════════ */
@@ -488,19 +495,14 @@ async function renderTechAnalysis() {
     { label: '🔴 暫不考慮（第 6 名以後）', color: '#ff4757', items: results.slice(5) },
   ];
 
-  // 寫回 scoreCache 讓首頁訊號點同步
+  // 寫回 dipCache 讓首頁訊號點同步（獨立快取，見上方宣告處的說明）
   results.forEach(({ holding, result }, idx) => {
     const rank = idx + 1;
     const rc = _rankColor(rank);
     const code = (holding.code || '').replace('.TW','').replace('.TWO','');
-    if (typeof scoreCache !== 'undefined') {
-      scoreCache[code] = { total: result.total, color: rc.cacheColor, scores: {} };
-      try {
-        const KEY_SCORE = Object.keys(localStorage).find(k => k.includes('score') || k.includes('Score')) || 'tw_scores';
-        localStorage.setItem(KEY_SCORE, JSON.stringify(scoreCache));
-      } catch(e) {}
-    }
+    dipCache[code] = { total: result.total, color: rc.cacheColor };
   });
+  try { localStorage.setItem('tw_dip_cache', JSON.stringify(dipCache)); } catch(e) {}
 
   groups.forEach(({ label, color, items }, gi) => {
     if (!items.length) return;
