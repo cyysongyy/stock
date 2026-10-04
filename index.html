@@ -71,10 +71,6 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .mp-hint{font-size:9px;color:var(--sub);line-height:1.5;margin-top:4px}
 
 /* Search */
-.search-bar{padding:9px 12px;display:flex;gap:7px;background:var(--card);border-bottom:1px solid var(--border)}
-.search-bar input{flex:1;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:13px;outline:none}
-.search-bar input:focus{border-color:var(--blue)}
-.search-bar button{background:var(--blue);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer}
 
 /* Tabs */
 .tab-bar{display:flex;background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto}
@@ -459,12 +455,6 @@ select option{background:var(--card2);color:var(--text)}
     <div class="mp-hint">台股交易時段 09:00–13:30（週一至週五）。開啟後自動更新報價，觸發目標/停損/訊號時發送通知。</div>
   </div>
 
-  <div class="search-bar">
-    <input id="inp" type="text" placeholder="搜尋股票代號（如 2330）" maxlength="6"
-      onkeydown="if(event.key==='Enter')doSearch()">
-    <button onclick="doSearch()">查詢</button>
-  </div>
-
   <div class="tab-bar">
     <div class="tab active" onclick="switchTab('portfolio')">📊 庫存</div>
     <div class="tab" onclick="switchTab('watch')">⭐ 自選</div>
@@ -501,7 +491,7 @@ select option{background:var(--card2);color:var(--text)}
   <!-- Analysis -->
   <div id="sec-analysis" class="section">
     <div class="section-inner" id="analysis-content">
-      <div class="empty-state"><div class="icon">🔍</div><p>請輸入股票代號查詢</p></div>
+      <div class="empty-state"><div class="icon">🔍</div><p>尚無持股，新增持股或至「自選」點選股票查看分析</p></div>
     </div>
   </div>
 
@@ -509,7 +499,7 @@ select option{background:var(--card2);color:var(--text)}
   <div id="sec-fundamental" class="section">
     <div class="section-inner" id="kline-section" style="padding-bottom:0"></div>
     <div class="section-inner" id="fundamental-content">
-      <div class="empty-state"><div class="icon">📋</div><p>請先查詢股票</p></div>
+      <div class="empty-state"><div class="icon">📋</div><p>請至「自選」點選股票查看基本面</p></div>
     </div>
   </div>
 
@@ -999,7 +989,7 @@ function removeWatch(code){
   saveWatchlist();renderWatchlist();
   showToast(code+' 已移除');
 }
-function watchSearch(code){document.getElementById('inp').value=code;doSearch();}
+function watchSearch(code){doSearch(code);}
 async function refreshWatchPrices(){
   if(!watchlist.length)return;
   const prices=await fetchTWSEPrices(watchlist.map(w=>w.code));
@@ -2396,7 +2386,7 @@ function drawKlineChart(cvs,data){
 }
 
 // ── Search ────────────────────────────────────────────────────
-async function doSearch(){const raw=document.getElementById('inp').value.trim();if(!raw)return;const L='<div class="loading"><div class="spinner"></div><p>載入中…</p></div>';document.getElementById('analysis-content').innerHTML=L;document.getElementById('fundamental-content').innerHTML=L;switchTab('analysis');try{const data=await fetchYahoo(raw);currentData=data;renderAnalysis(data);renderFundamental(data);}catch(e){const m='<div class="error-msg">⚠️ '+e.message+'</div>';document.getElementById('analysis-content').innerHTML=m;document.getElementById('fundamental-content').innerHTML=m;}}
+async function doSearch(code){const raw=(code||'').trim();if(!raw)return;const L='<div class="loading"><div class="spinner"></div><p>載入中…</p></div>';document.getElementById('analysis-content').innerHTML=L;document.getElementById('fundamental-content').innerHTML=L;switchTab('analysis');try{const data=await fetchYahoo(raw);currentData=data;renderAnalysis(data);renderFundamental(data);}catch(e){const m='<div class="error-msg">⚠️ '+e.message+'</div>';document.getElementById('analysis-content').innerHTML=m;document.getElementById('fundamental-content').innerHTML=m;}}
 
 // ── Analysis ──────────────────────────────────────────────────
 function renderAnalysis(data){const close=data.close,last=close.length-1;const price=close[last],chg=data.quote.regularMarketChange||(price-close[last-1]);const chgPct=data.quote.regularMarketChangePercent||(chg/close[last-1]*100);const ud=chg>=0?'up':'down';const name=data.quote.longName||data.quote.shortName||data.symbol;const sigs=getSignals(data);const overall=overallSig(sigs);const ma20=calcMA(close,20),ma60=calcMA(close,Math.min(60,close.length));const rsi=calcRSI(close);const{macd,signal,hist}=calcMACD(close);const bC=sigs.filter(s=>s.type==='bull').length,dC=sigs.filter(s=>s.type==='bear').length;let rCls='rec-neu',rTxt='⏸ 訊號分歧，建議觀望';if(bC>dC+1){rCls='rec-bull';rTxt='🔴 偏多訊號：'+sigs.filter(s=>s.type==='bull').map(s=>s.desc).join('、')+'。可考慮買入。';}else if(dC>bC+1){rCls='rec-bear';rTxt='🟢 偏空訊號：'+sigs.filter(s=>s.type==='bear').map(s=>s.desc).join('、')+'。可考慮賣出。';}document.getElementById('analysis-content').innerHTML=`<div class="stock-hcard"><div class="price-big"><span class="price ${ud}">$${price.toFixed(2)}</span><span class="chg ${ud}">${chg>=0?'+':''}${chg.toFixed(2)} (${chg>=0?'+':''}${chgPct.toFixed(2)}%)</span></div><div class="stock-sub">${name}</div><button style="background:var(--blue)18;border:1px solid var(--blue)33;border-radius:6px;padding:4px 9px;color:var(--blue);font-size:10px;font-weight:600;cursor:pointer" onclick="openAddModalWithCode('${data.symbol.replace('.TW','')}','${name.replace(/'/g,'')}')">＋ 加入持股並設目標</button> <button style="background:var(--amber)18;border:1px solid var(--amber)33;border-radius:6px;padding:4px 9px;color:var(--amber);font-size:10px;font-weight:600;cursor:pointer" onclick="addWatch('${data.symbol.replace('.TW','')}','${name.replace(/'/g,'')}')">⭐ 加入自選</button></div><div class="rec-box ${rCls}">${rTxt}</div><div style="text-align:center;margin:10px 0"><button onclick="aiAnalyzeStock()" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;border-radius:10px;padding:10px 20px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;width:100%">🤖 Claude AI 深度分析</button></div><div class="overall-signal"><div class="os-icon ${overall.cls}">${chg>=0?'↑':'↓'}</div><div class="os-text"><h3>${overall.text}</h3><p>${overall.hint}</p></div></div><div class="signal-box"><div class="signal-title">技術訊號</div>${sigs.map(s=>`<div class="signal-row"><span class="signal-name">${s.name}</span><span class="signal-badge ${s.type}">${s.desc}</span></div>`).join('')}</div><div class="chart-card"><div class="chart-title">股價走勢（近90日）</div><div class="ma-legend"><span><span class="ma-dot" style="background:#4d9eff"></span><span class="ma-label">收盤</span></span><span><span class="ma-dot" style="background:#f5a623"></span><span class="ma-label">MA20</span></span><span><span class="ma-dot" style="background:#ff4757"></span><span class="ma-label">MA60</span></span></div><div class="chart-wrap tall"><canvas id="chart-price"></canvas></div></div><div class="chart-card"><div class="chart-title">RSI (14)</div><div class="chart-wrap"><canvas id="chart-rsi"></canvas></div></div><div class="chart-card"><div class="chart-title">MACD (12,26,9)</div><div class="chart-wrap"><canvas id="chart-macd"></canvas></div></div>`;
