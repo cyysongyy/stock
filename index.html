@@ -1390,6 +1390,19 @@ function uspVerdict(score){
   if(score>-1.2) return{txt:'偏空',    emo:'📉',cls:'usp-dn',  desc:'美股收黑，台股恐開低'};
   return{txt:'強勢偏空',emo:'⚠️',cls:'usp-dn',desc:'美股重挫，注意台股賣壓'};
 }
+// 費半（半導體/電子股代表）vs 道瓊（傳產/藍籌股代表）的漲跌差距，
+// 直接反映「電子股 vs 傳產」哪邊動能較強 —— 用已經抓到的四個指數算，不用額外抓資料
+function uspSectorHint(indices){
+  const byNm=Object.fromEntries(indices.map(ix=>[ix.nm,ix.chg]));
+  const sox=byNm['費半'],dji=byNm['道瓊'];
+  if(sox==null||dji==null)return'';
+  const spread=sox-dji;
+  if(spread>=1.5)return'💡 費半領漲道瓊 '+spread.toFixed(1)+'%，電子／半導體股動能明顯強於傳產，台股電子權值股開高機率較大。';
+  if(spread>=0.6)return'💡 費半優於道瓊 '+spread.toFixed(1)+'%，電子股表現略強於傳產。';
+  if(spread<=-1.5)return'💡 道瓊領先費半 '+Math.abs(spread).toFixed(1)+'%，傳產動能強於電子股，留意半導體類股拉回風險。';
+  if(spread<=-0.6)return'💡 道瓊優於費半 '+Math.abs(spread).toFixed(1)+'%，傳產表現略強於電子股。';
+  return'💡 電子股與傳產漲跌同步，無明顯類股輪動。';
+}
 let _uspRetry=0;
 async function loadUSPredict(force){
   const wrap=document.getElementById('usp-wrap');
@@ -1436,6 +1449,7 @@ function renderUSPredict(d,updating,stale){
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
     +'<div class="usp-verdict"><div class="txt '+v.cls+'">'+v.emo+' '+v.txt+'</div><div class="sub">加權指標 '+(d.score>0?'+':'')+d.score.toFixed(2)+'</div></div>'
     +'<div style="font-size:11px;color:var(--sub);margin-top:4px">'+v.desc+'</div>'
+    +(uspSectorHint(d.indices)?'<div style="font-size:11px;color:var(--text);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">'+uspSectorHint(d.indices)+'</div>':'')
     +'<div class="usp-note">依前一交易日美股四大指數加權估算今日台股開盤傾向（費半 40%・那指 25%・S&P 20%・道瓊 15%），僅供參考，非投資建議。</div>'
     +'</div>';
 }
