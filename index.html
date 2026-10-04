@@ -1431,11 +1431,13 @@ async function renderHoldingPredictions(indices){
 function _renderHoldingRows(rows){
   const wrap=document.getElementById('usp-holdings-wrap');
   if(!wrap)return;
+  // 只列出有可靠對應指標（或還在抓取中）的持股，沒有對應指標的不顯示
+  const shown=rows.filter(r=>r.loading||r.proxy!=null);
+  if(!shown.length){wrap.innerHTML='';return;}
   wrap.innerHTML='<div style="font-size:11px;font-weight:700;color:var(--sub);margin:10px 0 6px">📌 你的持股對應</div>'
-    +rows.map(r=>{
+    +shown.map(r=>{
       const label='<span>'+r.code+' '+(r.name||'')+'</span>';
       if(r.loading)return'<div class="usp-hrow">'+label+'<span style="color:var(--sub)">抓取中…</span></div>';
-      if(r.proxy==null)return'<div class="usp-hrow">'+label+'<span style="color:var(--sub)">無可靠對應指標</span></div>';
       const c=r.chg>0.05?'usp-up':r.chg<-0.05?'usp-dn':'usp-flat';
       return'<div class="usp-hrow">'+label+'<span class="'+c+'">'+r.proxy+' '+(r.chg>=0?'+':'')+r.chg.toFixed(2)+'%</span></div>';
     }).join('');
