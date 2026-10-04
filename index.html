@@ -1745,7 +1745,7 @@ async function renderPortfolio(liveDataMap){
       <div class="holding-row" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 44px 64px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
         <div>
           <div class="hr-code">${h.code.replace('.TW','')}</div>
-          <div class="hr-sname">${(()=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';return h.name||priceCache[sym]?.name||priceCache[h.code]?.name||'';})()} </div>
+          <div class="hr-sname">${(()=>{const code=h.code.replace('.TW','');const n=_klName(h,code);return n!==code?n:'';})()} </div>
           ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
         <div class="hr-sig" onclick="event.stopPropagation();switchTab('analysis')">${renderScoreDot(h.code.replace('.TW',''))}</div>
@@ -1936,7 +1936,7 @@ function renderPortfolioScores(){
   if(!holdings.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--sub)">尚無持股</div>';return;}
   const items=[...holdings].sort((a,b)=>{const sa=scoreCache[a.code.replace('.TW','')]?.total||0,sb=scoreCache[b.code.replace('.TW','')]?.total||0;return sb-sa;}).map(h=>{
     const code=h.code.replace('.TW','');const sc=scoreCache[code];
-    const _dn=(()=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';return h.name||priceCache[sym]?.name||priceCache[h.code]?.name||h.code.replace('.TW','');})();if(!sc)return'<div class="sc-card"><div class="sc-head"><div class="sc-dot-big grey"></div><div class="sc-name">'+_dn+'</div><div style="color:var(--sub)">計算中…</div></div></div>';
+    const _dn=_klName(h,code);if(!sc)return'<div class="sc-card"><div class="sc-head"><div class="sc-dot-big grey"></div><div class="sc-name">'+_dn+'</div><div style="color:var(--sub)">計算中…</div></div></div>';
     const{total,color,scores:sv,isEstimate}=sc;
     const verdict=total>=80?'✅ 值得買入':total>=60?'🟡 可以考慮':'🔴 暫不考慮';
     const bc=color==='green'?'#00c853':color==='yellow'?'#ffd700':'#ff4757';
@@ -1952,7 +1952,7 @@ function renderPortfolioScores(){
       const sym=h.code.includes('.')?h.code:h.code+'.TW';
       const pc=priceCache[sym]||priceCache[code]||{};
       const dc=dataCache[sym]||dataCache[code]||null;
-      const dn=h.name||pc.name||code;
+      const dn=_klName(h,code);
       const curr=pc.price||null;
       // Today change
       const dayChg=pc.chgPct!=null?pc.chgPct:null;
@@ -2557,7 +2557,7 @@ function ocrImport(){
   valid.forEach(r=>{
     const code=(r.code||r.name).trim().toUpperCase();
     const found=OCR_DB.find(s=>s.c===code);
-    const h={code,name:r.name||found?.n||code,cat:'ETF',qty:parseInt(r.qty),cost:parseFloat(r.cost),target:null,stop:null,signalAlert:null,note:'',added:today};
+    const h={code,name:r.name||found?.n||'',cat:'ETF',qty:parseInt(r.qty),cost:parseFloat(r.cost),target:null,stop:null,signalAlert:null,note:'',added:today};
     holdings.push(h);
   });
   localStorage.setItem(KEY_HOLD,JSON.stringify(holdings));
