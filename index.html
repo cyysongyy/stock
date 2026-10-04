@@ -106,10 +106,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .kl-arrow{font-size:10px;color:var(--sub)}
 .kl-body{padding:0 2px 12px}
 
-.overview-card{background:var(--card);padding:20px 16px 16px;border-bottom:1px solid var(--border)}
+.overview-card{position:relative;overflow:hidden;padding:20px 16px 16px;border-bottom:1px solid var(--border);
+  background:radial-gradient(ellipse 120% 80% at 20% -10%,#2a5fd82a 0%,transparent 55%),
+    radial-gradient(ellipse 100% 70% at 100% 110%,#7c3aed26 0%,transparent 55%),
+    linear-gradient(180deg,#161a2c 0%,#10131d 100%)}
+.overview-card::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.35;
+  background-image:radial-gradient(circle,#4d9eff55 1px,transparent 1px);background-size:20px 20px;
+  -webkit-mask-image:linear-gradient(180deg,#000 0%,transparent 75%);mask-image:linear-gradient(180deg,#000 0%,transparent 75%)}
+.overview-card>*{position:relative;z-index:1}
+.ov-candles{position:absolute;left:0;bottom:0;width:120px;height:58px;opacity:.16;pointer-events:none;z-index:0}
 .ov-donut-row{display:flex;align-items:center;gap:20px;margin-bottom:16px}
 .donut-wrap{position:relative;width:110px;height:110px;flex-shrink:0}
-.donut-wrap canvas{position:absolute;inset:0}
+.donut-wrap::before{content:'';position:absolute;inset:-8px;border-radius:50%;background:radial-gradient(circle,#4d9eff3d 0%,transparent 70%);filter:blur(5px)}
+.donut-wrap canvas{position:absolute;inset:0;filter:drop-shadow(0 0 7px #4d9eff77)}
 .donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
 .donut-center .pct{font-size:20px;font-weight:800;color:var(--text)}
 .donut-center .lbl{font-size:9px;color:var(--sub);margin-top:1px}
@@ -120,9 +129,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .ov-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .ov-val{font-size:14px;font-weight:700}
 .ov-val.up{color:var(--red)}.ov-val.down{color:var(--green)}.ov-val.neu{color:var(--text)}
+.ov-eye{cursor:pointer;color:var(--sub);font-size:13px;line-height:1}
 .ov-actions{display:flex;gap:7px}
-.ov-btn{flex:1;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 6px;font-size:11px;font-weight:600;color:var(--sub);cursor:pointer;text-align:center}
-.ov-btn.primary{background:var(--blue)18;border-color:var(--blue)44;color:var(--blue)}
+.ov-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:linear-gradient(180deg,#1b2033,#141827);border:1px solid var(--border);border-radius:12px;
+  padding:10px 4px 8px;cursor:pointer;text-align:center;transition:border-color .15s,box-shadow .15s}
+.ov-btn:active{border-color:#4d9eff77;box-shadow:0 0 10px #4d9eff33}
+.ov-btn .ic{font-size:17px;line-height:1;filter:drop-shadow(0 0 4px #4d9eff99)}
+.ov-btn .lbl{font-size:10.5px;font-weight:700;color:var(--text)}
+.ov-btn .sub{font-size:8.5px;color:var(--sub);font-weight:400}
+.ov-btn.primary{background:linear-gradient(180deg,#2a3f7a4d,#1b2033);border-color:var(--blue)66}
+.ov-btn.primary .ic{filter:drop-shadow(0 0 6px #4d9effcc)}
+.ov-btn.primary .lbl{color:var(--blue)}
 
 /* ── Holdings Table ── */
 .holdings-wrap{padding:0}
@@ -966,6 +984,8 @@ let monitorOn=false,monitorTimer=null,countdownTimer=null,nextRefreshAt=0,dataCa
 let priceCache=JSON.parse(localStorage.getItem('tw_price_cache')||'{}');
 let alertedKeys=new Set();
 let openDetailIdx=-1;
+let hideBalance=localStorage.getItem('tw_hide_balance')==='1';
+function toggleBalanceVisibility(){hideBalance=!hideBalance;localStorage.setItem('tw_hide_balance',hideBalance?'1':'0');renderPortfolio();}
 let aiCache={}; // code → {verdict,text,ts}
 let watchlist=JSON.parse(localStorage.getItem(KEY_WATCH)||'[]'); // [{code,name,added}]
 let txns=JSON.parse(localStorage.getItem(KEY_TXN)||'[]'); // [{ts,date,code,name,side,qty,price,fee,pl}]
@@ -1738,41 +1758,53 @@ async function renderPortfolio(liveDataMap){
 
   // ── Donut chart ──
   if(chartDonut){chartDonut.destroy();chartDonut=null;}
+  const mask=v=>hideBalance?'••••••':v;
   ovWrap.innerHTML=`
     <div class="overview-card">
+      <svg class="ov-candles" viewBox="0 0 120 58" preserveAspectRatio="none">
+        <line x1="10" y1="10" x2="10" y2="40" stroke="#ff4757" stroke-width="1.5"/><rect x="6" y="16" width="8" height="16" fill="#ff4757"/>
+        <line x1="28" y1="4" x2="28" y2="30" stroke="#00d68f" stroke-width="1.5"/><rect x="24" y="8" width="8" height="14" fill="#00d68f"/>
+        <line x1="46" y1="18" x2="46" y2="50" stroke="#ff4757" stroke-width="1.5"/><rect x="42" y="24" width="8" height="18" fill="#ff4757"/>
+        <line x1="64" y1="2" x2="64" y2="26" stroke="#00d68f" stroke-width="1.5"/><rect x="60" y="6" width="8" height="12" fill="#00d68f"/>
+        <line x1="82" y1="12" x2="82" y2="44" stroke="#00d68f" stroke-width="1.5"/><rect x="78" y="18" width="8" height="18" fill="#00d68f"/>
+        <line x1="100" y1="8" x2="100" y2="36" stroke="#ff4757" stroke-width="1.5"/><rect x="96" y="12" width="8" height="16" fill="#ff4757"/>
+      </svg>
       <div class="ov-donut-row">
         <div class="donut-wrap">
           <canvas id="chart-donut"></canvas>
           <div class="donut-center">
             <span class="lbl" style="font-size:9px;color:var(--sub)">股票報酬</span>
-            <span class="pct" style="color:${totalPL>=0?'var(--red)':'var(--green)'};font-size:17px;font-weight:800;line-height:1.2">${totalPL>=0?'+':''}${totalPLPct.toFixed(2)}%</span>
+            <span class="pct" style="color:${totalPL>=0?'var(--red)':'var(--green)'};font-size:17px;font-weight:800;line-height:1.2">${mask((totalPL>=0?'+':'')+totalPLPct.toFixed(2)+'%')}</span>
           </div>
         </div>
         <div class="ov-stats">
           <div class="ov-row">
             <span class="ov-label" style="color:var(--text);font-size:12px">股票市值</span>
-            <span class="ov-val neu" style="font-size:14px;font-weight:700">${Math.round(totalVal||0).toLocaleString()}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="ov-val neu" style="font-size:14px;font-weight:700">${mask(Math.round(totalVal||0).toLocaleString())}</span>
+              <span class="ov-eye" onclick="event.stopPropagation();toggleBalanceVisibility()" title="${hideBalance?'顯示金額':'隱藏金額'}">${hideBalance?'🙈':'👁️'}</span>
+            </span>
           </div>
           <div class="ov-row">
             <span class="ov-label"><span class="ov-dot" style="background:var(--blue);border-radius:2px"></span>總成本</span>
-            <span class="ov-val neu">${Math.round(totalCost).toLocaleString()}</span>
+            <span class="ov-val neu">${mask(Math.round(totalCost).toLocaleString())}</span>
           </div>
           <div class="ov-row">
             <span class="ov-label"><span class="ov-dot" style="background:var(--red);border-radius:2px"></span>報酬</span>
-            <span class="ov-val ${totalPL>=0?'up':'down'}">${totalPL>=0?'+':''}${Math.round(totalPL).toLocaleString()}</span>
+            <span class="ov-val ${totalPL>=0?'up':'down'}">${mask((totalPL>=0?'+':'')+Math.round(totalPL).toLocaleString())}</span>
           </div>
           ${txns.some(t=>t.side==='sell')?(()=>{const rp=realizedPL();return`<div class="ov-row" onclick="openTxnModal()" style="cursor:pointer">
             <span class="ov-label"><span class="ov-dot" style="background:var(--purple);border-radius:2px"></span>已實現</span>
-            <span class="ov-val ${rp>=0?'up':'down'}">${rp>=0?'+':''}${Math.round(rp).toLocaleString()}</span>
+            <span class="ov-val ${rp>=0?'up':'down'}">${mask((rp>=0?'+':'')+Math.round(rp).toLocaleString())}</span>
           </div>`;})():''}
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
         </div>
       </div>
       <div class="ov-actions">
-        <div class="ov-btn" onclick="fetchLiveAndRender(true)" id="refresh-btn">🔄 刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:3px"></span></div>
-        <div class="ov-btn" onclick="exportData()">📤 匯出</div>
-        <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}">🤖 AI 掃描庫存</div>
-        <div class="ov-btn primary" onclick="openAddModal()">＋ 新增持股</div>
+        <div class="ov-btn" onclick="fetchLiveAndRender(true)" id="refresh-btn"><span class="ic">🔄</span><span class="lbl">刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:2px"></span></span><span class="sub">即時更新</span></div>
+        <div class="ov-btn" onclick="exportData()"><span class="ic">📤</span><span class="lbl">匯出</span><span class="sub">報表分享</span></div>
+        <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}"><span class="ic">🤖</span><span class="lbl">AI 掃描庫存</span><span class="sub">智慧選股</span></div>
+        <div class="ov-btn primary" onclick="openAddModal()"><span class="ic">＋</span><span class="lbl">新增持股</span><span class="sub">快速建倉</span></div>
       </div>
     </div>`;
   const cvs=document.getElementById('chart-donut');
