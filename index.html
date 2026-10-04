@@ -1165,8 +1165,15 @@ async function fetchLiveAndRender(manual){
   if(!holdings.length&&!watchlist.length)return;
   // Use TWSE direct API for current prices (works on iPhone without proxy)
   const codes=[...new Set([...holdings.map(h=>h.code.replace('.TW','')),...watchlist.map(w=>w.code)])];
-  const twsePrices=await fetchTWSEPrices(codes);
-  const resolvedCount=Object.keys(twsePrices).length;
+  let twsePrices=await fetchTWSEPrices(codes);
+  let resolvedCount=Object.keys(twsePrices).length;
+  // 每一層（TSE/OTC/公開API/備援）同時失敗，通常是開頁當下網路還沒就緒（手機剛喚醒、
+  // 剛切換 WiFi/行動網路），先重試一次再判定真的失敗，避免把暫時性問題當成全部失敗嚇到使用者
+  if(resolvedCount===0&&codes.length){
+    await new Promise(r=>setTimeout(r,2500));
+    twsePrices=await fetchTWSEPrices(codes);
+    resolvedCount=Object.keys(twsePrices).length;
+  }
   if(resolvedCount===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
     showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}`,8000);
