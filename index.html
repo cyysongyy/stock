@@ -102,6 +102,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .usp-verdict .sub{font-size:10px;color:var(--sub)}
 .usp-note{font-size:9px;color:var(--sub);margin-top:8px;line-height:1.5}
 .usp-up{color:var(--red)}.usp-dn{color:var(--green)}.usp-flat{color:var(--sub)}
+.usp-hrow{display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 0;border-top:1px solid var(--border)22}
 
 /* Portfolio K-line analysis */
 .kl-card{background:var(--card2);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;padding:0 12px;overflow:hidden}
@@ -1403,6 +1404,52 @@ function uspSectorHint(indices){
   if(spread<=-0.6)return'💡 道瓊優於費半 '+Math.abs(spread).toFixed(1)+'%，傳產表現略強於電子股。';
   return'💡 電子股與傳產漲跌同步，無明顯類股輪動。';
 }
+// 持股名稱關鍵字 → 對應到已抓好的美股指數（只對應基金名稱有明確寫出追蹤哪個指數的情況，
+// 避免亂猜：REIT基金、主動型基金等沒有單一對應指數的，一律回傳 null，不要假裝有預測）
+function _holdingIndexProxy(name){
+  if(/那斯達克|納斯達克|NASDAQ.*100|100.*那斯達克/i.test(name))return'那斯達克';
+  if(/標普\s*500|S&P\s*500|美國.*500大|500大.*美國/i.test(name))return'S&P 500';
+  if(/費城半導體|半導體.*美國|美國.*半導體/i.test(name))return'費半';
+  if(/道瓊|道琼/i.test(name))return'道瓊';
+  return null;
+}
+// 台積電有 ADR（美股代號 TSM，1 ADR=5 普通股）：ADR 隔夜漲跌幅是台股圈子常用、最直接
+// 對應 2330 開盤走勢的指標，直接重用既有的 fetchUSIndex() 多抓一檔即可，不用自己換算比例
+// ——百分比漲跌幅本身不受 ADR 換股比例影響。
+async function renderHoldingPredictions(indices){
+  const wrap=document.getElementById('usp-holdings-wrap');
+  if(!wrap||!holdings.length)return;
+  const byNm=Object.fromEntries(indices.map(ix=>[ix.nm,ix.chg]));
+  const rows=holdings.map(h=>{
+    const code=h.code.replace('.TW','');
+    const name=_klName(h,code);
+    if(code==='2330')return{code,name,proxy:'台積電 ADR',loading:true};
+    const idxNm=_holdingIndexProxy(name);
+    if(idxNm&&byNm[idxNm]!=null)return{code,name,proxy:idxNm,chg:byNm[idxNm]};
+    return{code,name,proxy:null};
+  });
+  _renderHoldingRows(rows);
+  const tsmRow=rows.find(r=>r.code==='2330');
+  if(tsmRow){
+    try{
+      const tsm=await fetchUSIndex('TSM');
+      tsmRow.chg=tsm.chg;tsmRow.loading=false;
+    }catch(e){tsmRow.proxy=null;tsmRow.loading=false;}
+    _renderHoldingRows(rows);
+  }
+}
+function _renderHoldingRows(rows){
+  const wrap=document.getElementById('usp-holdings-wrap');
+  if(!wrap)return;
+  wrap.innerHTML='<div style="font-size:11px;font-weight:700;color:var(--sub);margin:10px 0 6px">📌 你的持股對應</div>'
+    +rows.map(r=>{
+      const label='<span>'+r.code+' '+(r.name||'')+'</span>';
+      if(r.loading)return'<div class="usp-hrow">'+label+'<span style="color:var(--sub)">抓取中…</span></div>';
+      if(r.proxy==null)return'<div class="usp-hrow">'+label+'<span style="color:var(--sub)">無可靠對應指標</span></div>';
+      const c=r.chg>0.05?'usp-up':r.chg<-0.05?'usp-dn':'usp-flat';
+      return'<div class="usp-hrow">'+label+'<span class="'+c+'">'+r.proxy+' '+(r.chg>=0?'+':'')+r.chg.toFixed(2)+'%</span></div>';
+    }).join('');
+}
 let _uspRetry=0;
 async function loadUSPredict(force){
   const wrap=document.getElementById('usp-wrap');
@@ -1450,8 +1497,10 @@ function renderUSPredict(d,updating,stale){
     +'<div class="usp-verdict"><div class="txt '+v.cls+'">'+v.emo+' '+v.txt+'</div><div class="sub">加權指標 '+(d.score>0?'+':'')+d.score.toFixed(2)+'</div></div>'
     +'<div style="font-size:11px;color:var(--sub);margin-top:4px">'+v.desc+'</div>'
     +(uspSectorHint(d.indices)?'<div style="font-size:11px;color:var(--text);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">'+uspSectorHint(d.indices)+'</div>':'')
+    +'<div id="usp-holdings-wrap"></div>'
     +'<div class="usp-note">依前一交易日美股四大指數加權估算今日台股開盤傾向（費半 40%・那指 25%・S&P 20%・道瓊 15%），僅供參考，非投資建議。</div>'
     +'</div>';
+  renderHoldingPredictions(d.indices);
 }
 
 // ── TWSE/TPEx Open Data API — official public endpoints, real CORS,
