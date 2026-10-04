@@ -1324,7 +1324,15 @@ function calcTargetFromPct(){const c=parseFloat(document.getElementById('m-cost'
 function calcStopFromPct(){const c=parseFloat(document.getElementById('m-cost').value),p=parseFloat(document.getElementById('m-stop-pct').value);if(!isNaN(c)&&!isNaN(p))document.getElementById('m-stop').value=(c*(1+p/100)).toFixed(2);}
 function openAddModal(idx=-1){document.getElementById('modal-add-title').textContent=idx>=0?'編輯持股':'新增持股';document.getElementById('m-edit-idx').value=idx;['m-code','m-name','m-qty','m-cost','m-target','m-stop','m-note','m-target-pct','m-stop-pct'].forEach(id=>document.getElementById(id).value='');document.getElementById('m-cat').value='';document.getElementById('m-signal-alert').value='';if(idx>=0){const h=holdings[idx];document.getElementById('m-code').value=h.code;document.getElementById('m-name').value=h.name||'';document.getElementById('m-cat').value=h.cat||'';document.getElementById('m-qty').value=h.qty;document.getElementById('m-cost').value=h.cost;if(h.target)document.getElementById('m-target').value=h.target;if(h.stop)document.getElementById('m-stop').value=h.stop;if(h.signalAlert)document.getElementById('m-signal-alert').value=h.signalAlert;document.getElementById('m-note').value=h.note||'';}document.getElementById('modal-add').classList.add('open');setTimeout(()=>document.getElementById(idx>=0?'m-qty':'m-code').focus(),80);}
 function openAddModalWithCode(code,name){openAddModal();document.getElementById('m-code').value=code;document.getElementById('m-name').value=name;setTimeout(()=>document.getElementById('m-qty').focus(),100);}
-function saveHolding(){const idx=parseInt(document.getElementById('m-edit-idx').value);const code=document.getElementById('m-code').value.trim().toUpperCase();const name=document.getElementById('m-name').value.trim();const cat=document.getElementById('m-cat').value;const qty=parseInt(document.getElementById('m-qty').value);const cost=parseFloat(document.getElementById('m-cost').value);const target=parseFloat(document.getElementById('m-target').value)||null;const stop=parseFloat(document.getElementById('m-stop').value)||null;const signalAlert=document.getElementById('m-signal-alert').value||null;const note=document.getElementById('m-note').value.trim();if(!code||isNaN(qty)||isNaN(cost)||qty<=0||cost<=0){alert('請填寫股票代號、股數、成本');return;}const h={code,name,cat,qty,cost,target,stop,signalAlert,note,added:new Date().toLocaleDateString('zh-TW')};if(idx>=0)holdings[idx]=h;else holdings.push(h);localStorage.setItem(KEY_HOLD,JSON.stringify(holdings));syncToSheet();closeModal('modal-add');openDetailIdx=-1;renderPortfolio();showToast(code+(idx>=0?' 已更新 ✓':' 已新增 ✓'));}
+function saveHolding(){const idx=parseInt(document.getElementById('m-edit-idx').value);const code=document.getElementById('m-code').value.trim().toUpperCase();const name=document.getElementById('m-name').value.trim();const cat=document.getElementById('m-cat').value;const qty=parseInt(document.getElementById('m-qty').value);const cost=parseFloat(document.getElementById('m-cost').value);const target=parseFloat(document.getElementById('m-target').value)||null;const stop=parseFloat(document.getElementById('m-stop').value)||null;const signalAlert=document.getElementById('m-signal-alert').value||null;const note=document.getElementById('m-note').value.trim();if(!code||isNaN(qty)||isNaN(cost)||qty<=0||cost<=0){alert('請填寫股票代號、股數、成本');return;}const h={code,name,cat,qty,cost,target,stop,signalAlert,note,added:new Date().toLocaleDateString('zh-TW')};const isNew=idx<0;if(idx>=0)holdings[idx]=h;else holdings.push(h);localStorage.setItem(KEY_HOLD,JSON.stringify(holdings));syncToSheet();closeModal('modal-add');openDetailIdx=-1;renderPortfolio();showToast(code+(idx>=0?' 已更新 ✓':' 已新增 ✓'));if(isNew)_analyzeNewHoldings();}
+// 新增持股後，所有分析系統（買點訊號偵測、基本面評分、美股對應）都是每次重算時
+// 直接讀當下的 holdings 陣列，本來就會自動涵蓋新股票——只是要等下次排程才會跑到。
+// 這裡主動踢一次，讓新股票馬上開始出現在各項分析，不用乾等
+function _analyzeNewHoldings(){
+  if(typeof renderTechAnalysis==='function')renderTechAnalysis();
+  if(typeof refreshScores==='function')refreshScores().then(()=>renderPortfolio());
+  if(typeof loadUSPredict==='function')loadUSPredict();
+}
 function deleteHolding(i){if(!confirm('確定刪除？'))return;holdings.splice(i,1);openDetailIdx=-1;localStorage.setItem(KEY_HOLD,JSON.stringify(holdings));renderPortfolio();}
 
 // ── iOS-compatible timed fetch ──────────────────────────────
@@ -2660,6 +2668,7 @@ function ocrImport(){
   closeModal('modal-ocr');
   renderPortfolio();
   showToast('已匯入 '+valid.length+' 檔持股 ✓');
+  _analyzeNewHoldings();
 }
 </script>
 
