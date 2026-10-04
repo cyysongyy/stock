@@ -216,10 +216,12 @@ async function fetchTAIEX() {
   const msg = data?.msgArray?.[0];
   if (!msg) return null;
 
-  // z=現價, y=昨收, o=開盤
+  // z=現價, y=昨收, o=開盤 —— 盤前/剛開盤時 z 常是 "-"（還沒有今日即時指數），
+  // parseFloat 會得到 NaN，沒驗證就會讓「指數跌幅」條件顯示 "TAIEX NaN%"
   const cur  = parseFloat(msg.z || msg.tv || 0);
   const prev = parseFloat(msg.y || 0);
-  const chg  = prev > 0 ? (cur - prev) / prev * 100 : 0;
+  if (!cur || !prev) return null;
+  const chg  = (cur - prev) / prev * 100;
 
   _taiexCache = { cur, prev, chgPct: Math.round(chg * 100) / 100 };
   _taiexTs = Date.now();
