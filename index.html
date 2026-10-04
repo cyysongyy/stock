@@ -1748,7 +1748,7 @@ async function renderPortfolio(liveDataMap){
           <div class="hr-sname">${(()=>{const code=h.code.replace('.TW','');const n=_klName(h,code);return n!==code?n:'';})()} </div>
           ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
-        <div class="hr-sig" onclick="event.stopPropagation();switchTab('analysis')">${renderScoreDot(h.code.replace('.TW',''))}</div>
+        <div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>
         <div class="hr-prices">
           <div class="hr-mkt">${curr?curr.toFixed(2):'—'}</div>
           <div class="hr-avg">${h.cost.toFixed(2)}</div>
@@ -2224,6 +2224,15 @@ function renderKlineSection(){
     window._klNamesFetching=true;
     _fetchStockNames(missing).then(()=>{window._klNamesFetching=false;renderKlineSection();}).catch(()=>{window._klNamesFetching=false;});
   }
+}
+function openKlineFor(code){
+  switchTab('fundamental');
+  setTimeout(()=>{
+    const card=document.getElementById('kl-card-'+code);
+    if(!card)return;
+    card.scrollIntoView({behavior:'smooth',block:'start'});
+    if(!klineOpen[code])toggleKline(code);
+  },80);
 }
 function toggleKline(code){
   klineOpen[code]=!klineOpen[code];
