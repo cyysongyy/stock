@@ -1,5 +1,5 @@
 /* 台股 Dashboard Service Worker — App Shell 快取，離線可開啟 */
-const CACHE = 'twdash-v1';
+const CACHE = 'twdash-v2';
 const SHELL = [
   './',
   './index.html',
@@ -31,8 +31,11 @@ self.addEventListener('fetch', e => {
   const isShell = url.origin === location.origin;
   const isCDN = /cdnjs\.cloudflare\.com|unpkg\.com/.test(url.host);
   if (!isShell && !isCDN) return;
+  // same-origin app shell 一定要繞過瀏覽器自己的 HTTP 快取，否則「網路優先」
+  // 其實還是會從瀏覽器磁碟快取拿到舊版 index.html，造成已經部署的修正看起來沒生效
+  const netReq = isShell ? new Request(req, { cache: 'no-store' }) : req;
   e.respondWith(
-    fetch(req).then(res => {
+    fetch(netReq).then(res => {
       if (res && res.ok) {
         const clone = res.clone();
         caches.open(CACHE).then(c => c.put(req, clone));
