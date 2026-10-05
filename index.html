@@ -1848,8 +1848,8 @@ async function renderPortfolio(liveDataMap){
           ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
         <div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>
-        <div class="hr-prices">
-          <div class="hr-mkt">${curr?curr.toFixed(2):'—'}</div>
+        <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
+          <div class="hr-mkt">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
           <div class="hr-avg">${h.cost.toFixed(2)}</div>
         </div>
         <div class="hr-shares">
@@ -1961,6 +1961,21 @@ async function aiAnalyzeSingle(code,idx){
       errBox.textContent='⚠️ AI 分析失敗：'+e.message;
     }
   }
+}
+// 手動校正市價——自動抓價偶爾會跟實際有落差，且不一定能馬上重新抓到正確值；
+// 讓使用者直接打正確的價格進去先用，下次自動刷新抓到新報價時會自然覆蓋掉
+function manualPriceCorrect(code){
+  const sym=code.includes('.')?code:code+'.TW';
+  const pc=priceCache[sym]||priceCache[code]||{};
+  const input=prompt('手動校正 '+code+' 現價\n（僅供目前顯示用，下次自動刷新會被最新報價覆蓋）',pc.price?pc.price.toFixed(2):'');
+  if(input===null)return;
+  const val=parseFloat(input);
+  if(isNaN(val)||val<=0){showToast('請輸入有效的價格');return;}
+  const prev=pc.prev!=null?pc.prev:(pc.price||null);
+  priceCache[sym]={...pc,price:val,chgPct:prev?((val-prev)/prev*100):(pc.chgPct??null),date:new Date().toLocaleDateString('zh-TW')};
+  localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
+  renderPortfolio();
+  showToast(code+' 現價已校正為 '+val.toFixed(2)+' ✓');
 }
 function toggleDetail(i){
   openDetailIdx=openDetailIdx===i?-1:i;
