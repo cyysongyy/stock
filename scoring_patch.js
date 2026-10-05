@@ -410,7 +410,8 @@ function _card(holding, result, rank) {
    8. 主渲染
    ════════════════════════════════════════════════ */
 
-async function renderTechAnalysis() {
+async function renderTechAnalysis(opts) {
+  const silent = !!(opts && opts.silent);
   // 找容器 — index.html 用 #analysis-content
   let wrap = document.getElementById('analysis-content')
           || document.getElementById('analysis-wrap')
@@ -433,7 +434,8 @@ async function renderTechAnalysis() {
     return;
   }
 
-  wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#aaa">
+  // 盤中背景定時重算時不蓋掉現有內容，避免使用者正在看分析頁時畫面一直閃「載入中」
+  if (!silent) wrap.innerHTML = `<div style="padding:20px;text-align:center;color:#aaa">
     <div style="font-size:26px;margin-bottom:8px">⏳</div>
     正在抓取 K 線與指數資料…
   </div>`;
@@ -505,6 +507,7 @@ async function renderTechAnalysis() {
     };
   });
   try { localStorage.setItem('tw_dip_cache', JSON.stringify(dipCache)); } catch(e) {}
+  _maybeDipPopup(results);
 
   groups.forEach(({ label, color, items }, gi) => {
     if (!items.length) return;
@@ -524,6 +527,92 @@ async function renderTechAnalysis() {
   // 刷新首頁持股列表的訊號點
   if (typeof renderPortfolio === 'function') setTimeout(() => renderPortfolio(), 100);
 }
+
+/* ════════════════════════════════════════════════
+   8b. 盤中低點彈窗
+       「值得買入」是排名前 2，只有 1–2 檔持股時永遠是綠的，所以彈窗另外要求
+       至少 2 個條件真的成立（例如 K<20 + 跌破月線），才算真正的相對低點。
+       只在盤中彈（才能馬上下單），同一檔一天只彈一次
+   ════════════════════════════════════════════════ */
+
+const _DIP_POPUP_KEY = 'tw_dip_popup_seen';
+const _DIP_POPUP_MIN_MET = 2;
+
+function _spEsc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function _maybeDipPopup(results) {
+  if (typeof isMarketOpen === 'function' && !isMarketOpen()) return;
+  const today = new Date().toLocaleDateString('zh-TW');
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem(_DIP_POPUP_KEY) || '{}'); } catch (e) {}
+  if (seen.date !== today) seen = { date: today, codes: [] };
+
+  const hits = results.filter(({ holding, result }, idx) => {
+    const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
+    return idx < 2 && result.metCount >= _DIP_POPUP_MIN_MET && !seen.codes.includes(code);
+  });
+  if (!hits.length) return;
+
+  hits.forEach(({ holding }) => seen.codes.push((holding.code || '').replace('.TW', '').replace('.TWO', '')));
+  try { localStorage.setItem(_DIP_POPUP_KEY, JSON.stringify(seen)); } catch (e) {}
+  _showDipPopup(hits);
+}
+
+function _showDipPopup(hits) {
+  let ov = document.getElementById('modal-dip-popup');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'modal-dip-popup';
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target === ov) ov.classList.remove('open'); };
+    document.body.appendChild(ov);
+  }
+  const cards = hits.map(({ holding, result }) => {
+    const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
+    const name = typeof _klName === 'function' ? _klName(holding, code) : (holding.name || code);
+    // result.close 是 K 線快取的收盤（最多 4 小時前），彈窗要給下單用，優先用即時報價
+    const pc = typeof priceCache !== 'undefined' ? (priceCache[code] || priceCache[code + '.TW']) : null;
+    const live = pc?.price ?? result.close;
+    const price = live != null ? '$' + Number(live).toFixed(2) : '—';
+    const chg = result.chgPct != null ? (result.chgPct >= 0 ? '+' : '') + result.chgPct.toFixed(2) + '%' : '';
+    const conds = result.items.filter(i => i.met)
+      .map(i => `<div style="font-size:12px;color:var(--text);margin-top:3px">✅ ${_spEsc(i.label)}　<span style="color:var(--sub)">${_spEsc(i.detail)}</span></div>`).join('');
+    return `
+      <div style="background:var(--card2);border:1px solid #00c85355;border-radius:12px;padding:12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <div style="font-size:15px;font-weight:800">${_spEsc(code)} ${_spEsc(name !== code ? name : '')}</div>
+          <div style="font-size:15px;font-weight:700">${price} <span style="font-size:12px;color:${result.chgPct < 0 ? 'var(--green)' : 'var(--red)'}">${chg}</span></div>
+        </div>
+        <div style="font-size:11px;color:#00c853;margin:4px 0 2px">${result.metCount}/5 條件成立</div>
+        ${conds}
+        <button onclick="document.getElementById('modal-dip-popup').classList.remove('open');openKlineFor('${_spEsc(code)}')"
+          style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:#00c853;color:#000;font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
+      </div>`;
+  }).join('');
+  ov.innerHTML = `
+    <div class="modal">
+      <h3>⏰ 相對低點出現</h3>
+      <div style="font-size:11px;color:var(--sub);margin:-8px 0 12px">以下持股目前符合買點訊號，可以考慮下單（僅供參考，請自行判斷）</div>
+      ${cards}
+      <div class="modal-btns"><button class="btn-cancel" onclick="document.getElementById('modal-dip-popup').classList.remove('open')">知道了</button></div>
+    </div>`;
+  ov.classList.add('open');
+  try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
+}
+
+// 買點訊號原本只在開 App / 切到分析頁時算一次，盤中價格變了也不會重算，
+// 低點彈窗就永遠不會在盤中觸發；盤中每 5 分鐘在背景重算一次（K 線有 4 小時快取、
+// 大盤有 10 分鐘快取，實際只多打即時價格相關的請求）
+let _dipRefreshBusy = false;
+setInterval(async () => {
+  if (_dipRefreshBusy || document.visibilityState !== 'visible') return;
+  if (typeof isMarketOpen === 'function' && !isMarketOpen()) return;
+  _dipRefreshBusy = true;
+  try { await renderTechAnalysis({ silent: true }); } catch (e) {}
+  _dipRefreshBusy = false;
+}, 5 * 60 * 1000);
 
 /* ================================================
    9. 即時股價抓取（不覆蓋 index.html 的 fetchTWSEPrices）
