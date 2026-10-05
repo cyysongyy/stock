@@ -1752,13 +1752,16 @@ async function renderPortfolio(liveDataMap){
   // Use passed live data or empty (renders instantly with cache)
   const dataMap=liveDataMap||{};
   let totalCost=0,totalVal=0;
+  const todayStr=new Date().toLocaleDateString('zh-TW');
   const rowData=holdings.map((h,i)=>{
     const sym=h.code.includes('.')?h.code:h.code+'.TW';
     const d=dataMap[sym]||dataMap[h.code];
     const sym2=h.code.includes('.')?h.code:h.code+'.TW';
     const pcached=priceCache[sym2]||priceCache[h.code];
     const curr=d?d.close[d.close.length-1]:(pcached?.price||null);
-    const isStale=!d&&!!pcached;
+    // 真正的「過期」要看快取是哪天抓的，不是這次 render 有沒有收到即時 dataMap——
+    // 後者幾乎每次重繪（切換餘額顯示、展開明細…）都會是 true，會整排一直閃警示
+    const isStale=!!pcached&&!!pcached.date&&pcached.date!==todayStr;
     const staleDate=pcached?.date||'';
     const cost=h.cost*h.qty,val=curr?curr*h.qty:null,pl=val?val-cost:null,plPct=pl?(pl/cost*100):null;
     totalCost+=cost;if(val)totalVal+=val;
@@ -1767,6 +1770,7 @@ async function renderPortfolio(liveDataMap){
     return{h,i,curr,cost,val,pl,plPct,sigs,tl,isStale,staleDate,pcached};
   });
   const totalPL=totalVal-totalCost,totalPLPct=totalCost?(totalPL/totalCost*100):0;
+  const staleCount=rowData.filter(r=>r.isStale).length;
 
   // ── Donut chart ──
   if(chartDonut){chartDonut.destroy();chartDonut=null;}
@@ -1810,6 +1814,7 @@ async function renderPortfolio(liveDataMap){
             <span class="ov-val ${rp>=0?'up':'down'}">${mask((rp>=0?'+':'')+Math.round(rp).toLocaleString())}</span>
           </div>`;})():''}
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
+          ${staleCount?`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${staleCount} 檔非今日報價，市值估計可能不準，點此刷新</div>`:''}
         </div>
       </div>
       <div class="ov-actions">
@@ -1850,6 +1855,7 @@ async function renderPortfolio(liveDataMap){
         <div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>
         <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
           <div class="hr-mkt">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
+          ${isStale?`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`:''}
           <div class="hr-avg">${h.cost.toFixed(2)}</div>
         </div>
         <div class="hr-shares">
