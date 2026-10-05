@@ -324,6 +324,11 @@ select option{background:var(--card2);color:var(--text)}
 .sig-label.yellow{color:#ffd700}
 .sig-label.red{color:#ff4757}
 .sig-label.grey{color:var(--sub);font-weight:400}
+.sig-dot.live{animation:sigLivePulse 1.3s ease-in-out infinite}
+@keyframes sigLivePulse{0%,100%{box-shadow:0 0 7px #00c85388;transform:scale(1)}50%{box-shadow:0 0 16px 3px #00c853cc;transform:scale(1.2)}}
+.sig-live-badge{font-size:10px;line-height:1;margin-top:1px}
+.ov-live-buy{animation:sigLiveGlow 1.6s ease-in-out infinite}
+@keyframes sigLiveGlow{0%,100%{opacity:.65}50%{opacity:1}}
 /* Score Cards */
 .score-section{padding:14px}
 .score-section-title{font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
@@ -1788,6 +1793,7 @@ async function renderPortfolio(liveDataMap){
   });
   const totalPL=totalVal-totalCost,totalPLPct=totalCost?(totalPL/totalCost*100):0;
   const staleCount=rowData.filter(r=>r.isStale).length;
+  const liveBuyNames=holdings.filter(h=>{const code=h.code.replace('.TW','').replace('.TWO','');const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;return dc&&dc.color==='green';}).map(h=>_klName(h,h.code.replace('.TW','').replace('.TWO','')));
 
   // ── Donut chart ──
   if(chartDonut){chartDonut.destroy();chartDonut=null;}
@@ -1832,6 +1838,7 @@ async function renderPortfolio(liveDataMap){
           </div>`;})():''}
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
           ${staleCount?`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${staleCount} 檔非今日報價，市值估計可能不準，點此刷新</div>`:''}
+          ${liveBuyNames.length?`<div class="ov-live-buy" style="text-align:right;font-size:10px;color:#00c853;margin-top:4px;cursor:pointer" onclick="event.stopPropagation();switchTab('analysis')">⏰ ${liveBuyNames.join('、')} 符合即時買點訊號，點此查看</div>`:''}
         </div>
       </div>
       <div class="ov-actions">
@@ -2058,9 +2065,12 @@ function renderScoreDot(code){
   const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
   if(dc){
     const labelMap={green:'買入',yellow:'考慮',red:'觀望'};
-    const titleMap={green:'買點訊號：值得買入',yellow:'買點訊號：可考慮買入',red:'買點訊號：暫不考慮'};
+    const titleMap={green:'買點訊號：值得買入（即時）',yellow:'買點訊號：可考慮買入',red:'買點訊號：暫不考慮'};
     const shortLabel=labelMap[dc.color]||'—';
-    return'<div class="sig-dot '+dc.color+'" title="'+(titleMap[dc.color]||'')+' ('+dc.total+'分)"></div><div class="sig-label '+dc.color+'">'+shortLabel+'</div>';
+    const isLive=dc.color==='green';
+    const dotCls='sig-dot '+dc.color+(isLive?' live':'');
+    const badge=isLive?'<div class="sig-live-badge" title="即時買點訊號">⏰</div>':'';
+    return'<div class="'+dotCls+'" title="'+(titleMap[dc.color]||'')+' ('+dc.total+'分)"></div><div class="sig-label '+dc.color+'">'+shortLabel+'</div>'+badge;
   }
   const sc=scoreCache[code];
   if(!sc)return'<div class="sig-dot grey" title="計算中…"></div><div class="sig-label grey">—</div>';
