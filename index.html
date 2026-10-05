@@ -549,6 +549,7 @@ select option{background:var(--card2);color:var(--text)}
     <div class="form-group"><label>技術訊號提醒</label>
       <select id="m-signal-alert">
         <option value="">不設定</option>
+        <option value="dip_buy">📉 買點訊號轉為「值得買入」→ 低點提醒</option>
         <option value="rsi_oversold">RSI 超賣（&lt;30）→ 買入機會</option>
         <option value="rsi_overbought">RSI 超買（>70）→ 考慮賣出</option>
         <option value="macd_bull">MACD 黃金交叉 → 買入訊號</option>
@@ -1310,7 +1311,15 @@ async function runMonitorCycle(){if(!holdings.length)return;
 function fireAlert(a){if(Notification.permission==='granted'){const icon={target:'💰',stop:'⚠️',signal:'📡'};try{new Notification(icon[a.type]+' '+a.code+(a.name&&a.name!==a.code?' '+a.name:''),{body:a.msg,silent:false});}catch(e){}}}
 async function reqNotifPerm(){if(!('Notification'in window)){showToast('此瀏覽器不支援通知');return;}const p=await Notification.requestPermission();if(p==='granted'){setNotifGranted();showToast('通知已開啟 🔔');}else showToast('通知未授權');}
 function setNotifGranted(){const btn=document.getElementById('notif-btn');if(btn){btn.textContent='🔔 通知開';btn.className='notif-btn ok';}}
-function checkSignalAlert(h,sigs){if(!h.signalAlert||!sigs.length)return null;const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
+function checkSignalAlert(h,sigs){
+  if(!h.signalAlert)return null;
+  if(h.signalAlert==='dip_buy'){
+    const code=h.code.replace('.TW','').replace('.TWO','');
+    const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+    return dc&&dc.color==='green'?'買點訊號轉為「值得買入」，留意低點進場 📉':null;
+  }
+  if(!sigs.length)return null;
+  const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&monitorOn){if(Date.now()>=nextRefreshAt)runMonitorCycle().then(scheduleNext);}});
 // 回到 App／喚醒畫面時，自動更新「美股收盤→台股預測」（30分鐘內用快取，不重複抓）
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')loadUSPredict();});
