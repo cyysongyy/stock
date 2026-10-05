@@ -1305,18 +1305,26 @@ async function runMonitorCycle(){if(!holdings.length)return;
         newAlerts.push(a);fireAlert(a);
       }
     }
-    if(h.signalAlert){const msg=checkSignalAlert(h,sigs);if(msg){const k=h.code+'_sig_'+h.signalAlert+'_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'signal',code:h.code,name:h.name||h.code,msg,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}}});if(newAlerts.length){alertLog=[...newAlerts,...alertLog].slice(0,100);localStorage.setItem(KEY_ALERTS,JSON.stringify(alertLog));renderAlertLog();}renderPortfolio(dataMap);const upTime=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+    if(h.signalAlert){const msg=checkSignalAlert(h,sigs,curr);if(msg){const k=h.code+'_sig_'+h.signalAlert+'_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'signal',code:h.code,name:h.name||h.code,msg,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}}});if(newAlerts.length){alertLog=[...newAlerts,...alertLog].slice(0,100);localStorage.setItem(KEY_ALERTS,JSON.stringify(alertLog));renderAlertLog();}renderPortfolio(dataMap);const upTime=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
   showToast('報價已更新 '+upTime);
   const el=document.getElementById('last-update-time');if(el)el.textContent=upTime;}
 function fireAlert(a){if(Notification.permission==='granted'){const icon={target:'💰',stop:'⚠️',signal:'📡'};try{new Notification(icon[a.type]+' '+a.code+(a.name&&a.name!==a.code?' '+a.name:''),{body:a.msg,silent:false});}catch(e){}}}
 async function reqNotifPerm(){if(!('Notification'in window)){showToast('此瀏覽器不支援通知');return;}const p=await Notification.requestPermission();if(p==='granted'){setNotifGranted();showToast('通知已開啟 🔔');}else showToast('通知未授權');}
 function setNotifGranted(){const btn=document.getElementById('notif-btn');if(btn){btn.textContent='🔔 通知開';btn.className='notif-btn ok';}}
-function checkSignalAlert(h,sigs){
+function checkSignalAlert(h,sigs,curr){
   if(!h.signalAlert)return null;
   if(h.signalAlert==='dip_buy'){
     const code=h.code.replace('.TW','').replace('.TWO','');
     const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
-    return dc&&dc.color==='green'?'買點訊號轉為「值得買入」，留意低點進場 📉':null;
+    if(!dc||dc.color!=='green')return null;
+    // 把實際數字帶進通知裡（現價、幾項條件成立、K值、MA20、今日漲跌），
+    // 不要只給一句「值得買入」就要使用者自己再回來App查——通知本身就要夠判斷
+    const priceStr=curr!=null?'$'+curr.toFixed(2):(dc.close!=null?'$'+dc.close.toFixed(2):'—');
+    const parts=[`現價 ${priceStr}`,`${dc.metCount}/5 條件成立`];
+    if(dc.k!=null)parts.push('K='+dc.k);
+    if(dc.ma20!=null)parts.push('MA20='+dc.ma20.toFixed(2));
+    if(dc.chgPct!=null)parts.push('今日'+(dc.chgPct>=0?'+':'')+dc.chgPct.toFixed(2)+'%');
+    return '買點訊號轉為「值得買入」📉\n'+parts.join('　');
   }
   if(!sigs.length)return null;
   const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
