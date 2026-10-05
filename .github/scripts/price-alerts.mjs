@@ -142,6 +142,12 @@ async function sendTelegram(text) {
 }
 
 async function main() {
+  // Secrets 還沒設定時直接結束（exit 0），避免排程每 10 分鐘就在 Actions 頁面噴一次失敗通知；
+  // 等四個 secrets 都補齊後，這個檢查自然就不會擋下去了
+  const required = ['SHEET_URL', 'SHEET_SECRET', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const missing = required.filter(k => !process.env[k]);
+  if (missing.length) { console.log('尚未設定必要的 secrets，略過本次檢查：' + missing.join(', ')); return; }
+
   if (!isMarketOpen()) { console.log('非台股交易時段，略過'); return; }
 
   const holdings = await fetchHoldings();
