@@ -1,0 +1,40 @@
+name: Stock Price Alerts
+
+on:
+  schedule:
+    # 每 10 分鐘，UTC 01:00–05:50 週一至五 ≈ 台股 09:00–13:50（含收盤後緩衝）
+    - cron: '*/10 1-5 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: price-alerts
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run price/signal check
+        env:
+          SHEET_URL: ${{ secrets.SHEET_URL }}
+          SHEET_SECRET: ${{ secrets.SHEET_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node .github/scripts/price-alerts.mjs
+
+      - name: Commit alert dedup state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/scripts/alerts-state.json
+          git diff --staged --quiet || git commit -m "chore: update alert dedup state [skip ci]"
+          git push
