@@ -86,8 +86,12 @@ async function _yFetch(url) {
    2. Yahoo Finance 歷史 K 線
    ════════════════════════════════════════════════ */
 
-const _HIST_KEY = c => `tw_hist_v3_${c}`;
+// v4：改抓 2 年＋除息紀錄（回測、一年位置、殖利率歷史位置都要用），舊的 3 個月快取直接清掉
+const _HIST_KEY = c => `tw_hist_v4_${c}`;
 const _HIST_TTL = 4 * 3600 * 1000;
+try {
+  Object.keys(localStorage).filter(k => k.startsWith('tw_hist_v3_')).forEach(k => localStorage.removeItem(k));
+} catch(e) {}
 
 /** 判斷股票市場（.TW 或 .TWO） */
 function _yahooSuffix(code) {
@@ -96,11 +100,11 @@ function _yahooSuffix(code) {
   return '.TW';  // 先統一試 .TW，失敗時 fallback 到 .TWO
 }
 
-/** Yahoo Finance chart API → OHLCV 陣列 */
+/** Yahoo Finance chart API → { candles: OHLCV 陣列, divs: 除息紀錄 } */
 async function _yahooOHLCV(code) {
   const suffixes = ['.TW', '.TWO'];
   for (const suf of suffixes) {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suf}?interval=1d&range=3mo`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${code}${suf}?interval=1d&range=2y&events=div`;
     const data = await _yFetch(url);
     if (!data) continue;
     const result = data?.chart?.result?.[0];
@@ -118,28 +122,36 @@ async function _yahooOHLCV(code) {
       close:  closes[i]     || 0,
       volume: q.volume?.[i] || 0,
     })).filter(c => c.close > 0);
+    const divs = Object.values(result.events?.dividends || {})
+      .map(d => ({ ts: d.date, amount: d.amount }))
+      .filter(d => d.ts && d.amount > 0)
+      .sort((a, b) => a.ts - b.ts);
 
-    return candles;
+    return { candles, divs };
   }
-  return [];
+  return { candles: [], divs: [] };
 }
 
-async function fetchHistory(code) {
+async function fetchHistoryFull(code) {
   try {
     const raw = localStorage.getItem(_HIST_KEY(code));
     if (raw) {
       const c = JSON.parse(raw);
       if (c.ts && Date.now() - c.ts < _HIST_TTL && c.data?.length >= 20)
-        return c.data;
+        return { candles: c.data, divs: c.divs || [] };
     }
   } catch(e) {}
 
-  const candles = await _yahooOHLCV(code);
+  const r = await _yahooOHLCV(code);
   try {
-    if (candles.length >= 5)
-      localStorage.setItem(_HIST_KEY(code), JSON.stringify({ ts: Date.now(), data: candles }));
+    if (r.candles.length >= 5)
+      localStorage.setItem(_HIST_KEY(code), JSON.stringify({ ts: Date.now(), data: r.candles, divs: r.divs }));
   } catch(e) {}
-  return candles;
+  return r;
+}
+
+async function fetchHistory(code) {
+  return (await fetchHistoryFull(code)).candles;
 }
 
 /* ════════════════════════════════════════════════
@@ -163,6 +175,153 @@ function _calcKD(candles, n = 9) {
     d = d * 2 / 3 + k / 3;
   }
   return { k: Math.round(k * 10) / 10, d: Math.round(d * 10) / 10 };
+}
+
+/* ════════════════════════════════════════════════
+   3b. 買賣時機：止跌確認、回測、分批價、相對位置
+       跌深條件只說明「跌很多了」，不代表不會再跌；這裡另外要求出現反轉跡象
+       （止跌確認），並用每檔自己過去 2 年的 K 線回測同一套規則，讓使用者知道
+       這個訊號對這檔股票過去到底準不準
+   ════════════════════════════════════════════════ */
+
+function _kdSeries(candles, n = 9) {
+  const K = new Array(candles.length).fill(null), D = K.slice();
+  let k = 50, d = 50;
+  for (let i = n - 1; i < candles.length; i++) {
+    let lo = Infinity, hi = -Infinity;
+    for (let j = i - n + 1; j <= i; j++) { lo = Math.min(lo, candles[j].low); hi = Math.max(hi, candles[j].high); }
+    const rsv = hi === lo ? 50 : (candles[i].close - lo) / (hi - lo) * 100;
+    k = k * 2 / 3 + rsv / 3; d = d * 2 / 3 + k / 3;
+    K[i] = k; D[i] = d;
+  }
+  return { K, D };
+}
+
+function _maSeries(candles, n) {
+  const out = new Array(candles.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < candles.length; i++) {
+    s += candles[i].close;
+    if (i >= n) s -= candles[i - n].close;
+    if (i >= n - 1) out[i] = s / n;
+  }
+  return out;
+}
+
+function _atr(candles, n = 14) {
+  if (candles.length < n + 1) return null;
+  let s = 0;
+  for (let i = candles.length - n; i < candles.length; i++) {
+    const c = candles[i], p = candles[i - 1].close;
+    s += Math.max(c.high - c.low, Math.abs(c.high - p), Math.abs(c.low - p));
+  }
+  return s / n;
+}
+
+// 只用 K 線算得出來的 3 個跌深條件（淨值、大盤沒有逐日歷史，回測時無法重現）
+function _techOversold(c, K, MA20, i) {
+  let m = 0;
+  if (K[i] != null && K[i] < 20) m++;
+  if (MA20[i] != null && c[i].close < MA20[i]) m++;
+  if (i > 0 && c[i - 1].close > 0 && (c[i].close / c[i - 1].close - 1) * 100 <= -3) m++;
+  return m;
+}
+
+function _recentOversold(c, K, MA20, i) {
+  for (let j = i; j > i - 5 && j >= 0; j--) if (_techOversold(c, K, MA20, j) >= 2) return true;
+  return false;
+}
+
+function _confirmAt(c, K, D, MA5, i) {
+  // 近 3 根內低檔（K<30）KD 黃金交叉，且現在 K 仍在 D 之上
+  for (let j = i; j > i - 3 && j > 0; j--) {
+    if (K[j] == null || K[j - 1] == null) break;
+    if (K[j - 1] <= D[j - 1] && K[j] > D[j] && Math.min(K[j - 1], K[j]) < 30 && K[i] > D[i]) return '低檔 KD 黃金交叉';
+  }
+  // 今天收在 5 日線之上，且近 3 根內曾收在 5 日線之下
+  if (MA5[i] != null && c[i].close > MA5[i]) {
+    for (let j = i - 1; j >= i - 3 && j >= 0; j--)
+      if (MA5[j] != null && c[j].close < MA5[j]) return '站回 5 日線';
+  }
+  return null;
+}
+
+function _deadCrossAt(K, D, i) {
+  for (let j = i; j > i - 3 && j > 0; j--) {
+    if (K[j] == null || K[j - 1] == null) break;
+    if (K[j - 1] >= D[j - 1] && K[j] < D[j] && Math.max(K[j - 1], K[j]) > 80 && K[i] < D[i]) return true;
+  }
+  return false;
+}
+
+function _backtest(c, K, D, MA5, MA20) {
+  const H = 20, n = c.length;
+  let cnt = 0, wins = 0, sum = 0, last = -999, bCnt = 0, bWins = 0, bSum = 0;
+  for (let i = 30; i < n - H; i++) {
+    const r = c[i + H].close / c[i].close - 1;
+    bCnt++; bSum += r; if (r > 0) bWins++;
+    if (i - last < 10) continue;  // 同一波下跌只算一次
+    if (_recentOversold(c, K, MA20, i) && _confirmAt(c, K, D, MA5, i)) {
+      cnt++; sum += r; if (r > 0) wins++; last = i;
+    }
+  }
+  return {
+    n: cnt, wins, avg: cnt ? sum / cnt * 100 : null,
+    baseWin: bCnt ? bWins / bCnt * 100 : null, baseAvg: bCnt ? bSum / bCnt * 100 : null,
+  };
+}
+
+// 台股升降單位，分批建議價要是真的掛得出去的價格
+function _tickDown(p, isETF) {
+  const t = isETF ? (p < 50 ? 0.01 : 0.05)
+    : p < 10 ? 0.01 : p < 50 ? 0.05 : p < 100 ? 0.1 : p < 500 ? 0.5 : p < 1000 ? 1 : 5;
+  return Math.round(Math.floor(p / t + 1e-9) * t * 100) / 100;
+}
+
+function _yieldStats(c, divs) {
+  if (!divs || !divs.length || c.length < 250) return null;
+  const YEAR = 365 * 86400, firstTs = c[0].ts, series = [];
+  for (let i = Math.max(0, c.length - 250); i < c.length; i++) {
+    if (c[i].ts - firstTs < YEAR) continue;  // 前面要有滿一年的配息紀錄才算得出近 12 個月殖利率
+    let s = 0;
+    for (const d of divs) if (d.ts > c[i].ts - YEAR && d.ts <= c[i].ts) s += d.amount;
+    series.push(s / c[i].close * 100);
+  }
+  if (series.length < 60) return null;
+  const now = series[series.length - 1];
+  if (!(now > 0)) return null;
+  return { now, pct: series.filter(y => y <= now).length / series.length * 100 };
+}
+
+function _timingSignals(candles, divs, livePrice, isETF) {
+  const n = candles.length;
+  if (n < 30) return { timing: null };
+  const { K, D } = _kdSeries(candles);
+  const MA5 = _maSeries(candles, 5), MA20 = _maSeries(candles, 20);
+  const i = n - 1;
+
+  const w = candles.slice(-250);
+  let pos1y = null;
+  if (w.length >= 120) {
+    const lo = Math.min(...w.map(x => x.low || x.close)), hi = Math.max(...w.map(x => x.high || x.close));
+    if (hi > lo) pos1y = (candles[i].close - lo) / (hi - lo) * 100;
+  }
+
+  const atr = _atr(candles);
+  const tranches = atr && livePrice
+    ? [0, 2, 4].map(m => { const p = _tickDown(livePrice - m * atr, isETF); return { price: p, pct: (p / livePrice - 1) * 100 }; })
+    : null;
+
+  return {
+    timing: {
+      oversoldNow: _techOversold(candles, K, MA20, i),
+      recentOversold: _recentOversold(candles, K, MA20, i),
+      confirm: _confirmAt(candles, K, D, MA5, i),
+      deadCross: _deadCrossAt(K, D, i),
+      bt: n >= 60 ? _backtest(candles, K, D, MA5, MA20) : null,
+      tranches, pos1y, yld: _yieldStats(candles, divs),
+    },
+  };
 }
 
 /* ════════════════════════════════════════════════
@@ -236,10 +395,10 @@ async function scoreBuySignal(holding, taiex, navMap) {
   const code = holding.code;
 
   // 現價資訊（從 tw_price_cache）
-  let curPrice = null, prevClose = null, chgPct = null;
+  let curPrice = null, prevClose = null, chgPct = null, entry = null;
   try {
     const pc = JSON.parse(localStorage.getItem('tw_price_cache') || '{}');
-    const entry = pc[code];
+    entry = pc[code] || null;
     if (entry) {
       curPrice  = parseFloat(entry.price || entry.z || 0) || null;
       if (entry.chgPct !== null && entry.chgPct !== undefined) {
@@ -252,8 +411,24 @@ async function scoreBuySignal(holding, taiex, navMap) {
     }
   } catch(e) {}
 
-  // 歷史 K 線
-  const candles = await fetchHistory(code);
+  // 歷史 K 線（2 年，回測與相對位置要用）
+  const hist = await fetchHistoryFull(code);
+  let candles = hist.candles;
+  // K 線快取最多 4 小時前，盤中把今天這根換成即時價，KD/月線/止跌確認才會跟著盤中價格走
+  const todayStr = new Date().toLocaleDateString('zh-TW');
+  if (candles.length && curPrice && entry && entry.date === todayStr) {
+    const last = candles[candles.length - 1];
+    const live = {
+      ts: Math.floor(Date.now() / 1000),
+      open: entry.open || last.open || curPrice,
+      high: Math.max(entry.high || curPrice, curPrice),
+      low: Math.min(entry.low || curPrice, curPrice),
+      close: curPrice, volume: last.volume || 0,
+    };
+    candles = new Date(last.ts * 1000).toLocaleDateString('zh-TW') === todayStr
+      ? [...candles.slice(0, -1), { ...live, ts: last.ts, open: last.open || live.open, high: Math.max(last.high, curPrice), low: Math.min(last.low || curPrice, curPrice) }]
+      : [...candles, live];
+  }
   const hasHistory = candles.length >= 20;
 
   const kd   = hasHistory ? _calcKD(candles) : { k: 50, d: 50 };
@@ -330,7 +505,8 @@ async function scoreBuySignal(holding, taiex, navMap) {
   const total = Math.min(100, items.reduce((s, i) => s + i.score, 0));
   const metCount = items.filter(i => i.met).length;
 
-  return { total, metCount, items, kd, ma20, close, chgPct, taiex, hasHistory };
+  return { total, metCount, items, kd, ma20, close, chgPct, taiex, hasHistory,
+           ..._timingSignals(candles, hist.divs, curPrice || close, isETF) };
 }
 
 /* ════════════════════════════════════════════════
@@ -377,6 +553,7 @@ function _card(holding, result, rank) {
   const v = _verdict(result.total, result.metCount);
   const rc = _rankColor(rank);
   const metStr = `${result.metCount}/5 條件成立`;
+  const u = typeof calcUrgency === 'function' ? calcUrgency(holding, _livePrice(holding)) : null;
 
   return `
     <div style="background:#1a1a2e;border-radius:12px;padding:16px;margin-bottom:14px;border:1px solid ${rc.dot}44">
@@ -392,12 +569,20 @@ function _card(holding, result, rank) {
             </div>
           </div>
         </div>
-        <div style="text-align:right">
+        <div style="text-align:right;display:flex;align-items:center;gap:8px">
+          ${u ? urgencyChipHTML(u) : ''}
+          <div>
           <div style="font-size:28px;font-weight:700;color:${rc.dot};line-height:1">${result.total}</div>
           <div style="font-size:10px;color:#555">${metStr}</div>
+          </div>
         </div>
       </div>
       ${result.items.map(_condRow).join('')}
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1e1e30">
+        <div style="font-size:11px;font-weight:700;color:#e8c84a">⏱ 買賣時機</div>
+        ${u ? `<div class="tm-row" style="color:${u.side === 'buy' ? '#00c853' : u.level === 3 ? '#ff4757' : '#ffa502'}"><b style="color:inherit">${u.label}</b>　${_spEsc(u.reason)}</div>` : ''}
+        ${typeof timingBlockHTML === 'function' ? timingBlockHTML(result.timing, u?.side === 'sell') : ''}
+      </div>
       <div style="font-size:10px;color:#444;margin-top:8px;padding-top:8px;border-top:1px solid #1e1e30">
         現價 ${result.close ? result.close.toFixed(2) : '—'}
         均成本 ${holding.cost || '—'}　持股 ${holding.qty || 0} 股
@@ -460,7 +645,7 @@ async function renderTechAnalysis(opts) {
 
   const refreshFn = `(async()=>{
     ${JSON.stringify(holdings.map(h => h.code))}.forEach(c=>{
-      try{localStorage.removeItem('tw_hist_v3_'+c)}catch(e){}
+      try{localStorage.removeItem('tw_hist_v4_'+c)}catch(e){}
     });
     _navCache=null; _taiexCache=null;
     if(typeof fetchTWSEPrices==='function') await fetchTWSEPrices();
@@ -504,10 +689,11 @@ async function renderTechAnalysis(opts) {
       total: result.total, color: rc.cacheColor, metCount: result.metCount,
       k: result.kd?.k ?? null, d: result.kd?.d ?? null,
       ma20: result.ma20 ?? null, close: result.close ?? null, chgPct: result.chgPct ?? null,
+      items: result.items.map(it => ({ label: it.label, detail: it.detail, met: it.met })),
+      timing: result.timing || null,
     };
   });
   try { localStorage.setItem('tw_dip_cache', JSON.stringify(dipCache)); } catch(e) {}
-  _maybeDipPopup(results);
 
   groups.forEach(({ label, color, items }, gi) => {
     if (!items.length) return;
@@ -528,82 +714,12 @@ async function renderTechAnalysis(opts) {
   if (typeof renderPortfolio === 'function') setTimeout(() => renderPortfolio(), 100);
 }
 
-/* ════════════════════════════════════════════════
-   8b. 盤中低點彈窗
-       「值得買入」是排名前 2，只有 1–2 檔持股時永遠是綠的，所以彈窗另外要求
-       至少 2 個條件真的成立（例如 K<20 + 跌破月線），才算真正的相對低點。
-       只在盤中彈（才能馬上下單），同一檔一天只彈一次
-   ════════════════════════════════════════════════ */
-
-const _DIP_POPUP_KEY = 'tw_dip_popup_seen';
-const _DIP_POPUP_MIN_MET = 2;
-
 function _spEsc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function _maybeDipPopup(results) {
-  if (typeof isMarketOpen === 'function' && !isMarketOpen()) return;
-  const today = new Date().toLocaleDateString('zh-TW');
-  let seen = {};
-  try { seen = JSON.parse(localStorage.getItem(_DIP_POPUP_KEY) || '{}'); } catch (e) {}
-  if (seen.date !== today) seen = { date: today, codes: [] };
-
-  const hits = results.filter(({ holding, result }, idx) => {
-    const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
-    return idx < 2 && result.metCount >= _DIP_POPUP_MIN_MET && !seen.codes.includes(code);
-  });
-  if (!hits.length) return;
-
-  hits.forEach(({ holding }) => seen.codes.push((holding.code || '').replace('.TW', '').replace('.TWO', '')));
-  try { localStorage.setItem(_DIP_POPUP_KEY, JSON.stringify(seen)); } catch (e) {}
-  _showDipPopup(hits);
-}
-
-function _showDipPopup(hits) {
-  let ov = document.getElementById('modal-dip-popup');
-  if (!ov) {
-    ov = document.createElement('div');
-    ov.id = 'modal-dip-popup';
-    ov.className = 'modal-overlay';
-    ov.onclick = e => { if (e.target === ov) ov.classList.remove('open'); };
-    document.body.appendChild(ov);
-  }
-  const cards = hits.map(({ holding, result }) => {
-    const code = (holding.code || '').replace('.TW', '').replace('.TWO', '');
-    const name = typeof _klName === 'function' ? _klName(holding, code) : (holding.name || code);
-    // result.close 是 K 線快取的收盤（最多 4 小時前），彈窗要給下單用，優先用即時報價
-    const pc = typeof priceCache !== 'undefined' ? (priceCache[code] || priceCache[code + '.TW']) : null;
-    const live = pc?.price ?? result.close;
-    const price = live != null ? '$' + Number(live).toFixed(2) : '—';
-    const chg = result.chgPct != null ? (result.chgPct >= 0 ? '+' : '') + result.chgPct.toFixed(2) + '%' : '';
-    const conds = result.items.filter(i => i.met)
-      .map(i => `<div style="font-size:12px;color:var(--text);margin-top:3px">✅ ${_spEsc(i.label)}　<span style="color:var(--sub)">${_spEsc(i.detail)}</span></div>`).join('');
-    return `
-      <div style="background:var(--card2);border:1px solid #00c85355;border-radius:12px;padding:12px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline">
-          <div style="font-size:15px;font-weight:800">${_spEsc(code)} ${_spEsc(name !== code ? name : '')}</div>
-          <div style="font-size:15px;font-weight:700">${price} <span style="font-size:12px;color:${result.chgPct < 0 ? 'var(--green)' : 'var(--red)'}">${chg}</span></div>
-        </div>
-        <div style="font-size:11px;color:#00c853;margin:4px 0 2px">${result.metCount}/5 條件成立</div>
-        ${conds}
-        <button onclick="document.getElementById('modal-dip-popup').classList.remove('open');openKlineFor('${_spEsc(code)}')"
-          style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:#00c853;color:#000;font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
-      </div>`;
-  }).join('');
-  ov.innerHTML = `
-    <div class="modal">
-      <h3>⏰ 相對低點出現</h3>
-      <div style="font-size:11px;color:var(--sub);margin:-8px 0 12px">以下持股目前符合買點訊號，可以考慮下單（僅供參考，請自行判斷）</div>
-      ${cards}
-      <div class="modal-btns"><button class="btn-cancel" onclick="document.getElementById('modal-dip-popup').classList.remove('open')">知道了</button></div>
-    </div>`;
-  ov.classList.add('open');
-  try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
-}
-
 // 買點訊號原本只在開 App / 切到分析頁時算一次，盤中價格變了也不會重算，
-// 低點彈窗就永遠不會在盤中觸發；盤中每 5 分鐘在背景重算一次（K 線有 4 小時快取、
+// 首頁的急迫性提示與彈窗（index.html 的 calcUrgency）就跟不上盤中變化；盤中每 5 分鐘在背景重算一次（K 線有 4 小時快取、
 // 大盤有 10 分鐘快取，實際只多打即時價格相關的請求）
 let _dipRefreshBusy = false;
 setInterval(async () => {

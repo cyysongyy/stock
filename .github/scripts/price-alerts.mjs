@@ -126,6 +126,30 @@ function calcKD(candles, n = 9) {
   }
   return { k: Math.round(k * 10) / 10, d: Math.round(d * 10) / 10 };
 }
+// 同 scoring_patch.js 的 _confirmAt：近 3 根內低檔 KD 黃金交叉，或站回 5 日線
+function confirmReversal(candles, n = 9) {
+  const K = [], D = [];
+  let k = 50, d = 50;
+  for (let i = 0; i < candles.length; i++) {
+    if (i >= n - 1) {
+      const slice = candles.slice(i - n + 1, i + 1);
+      const lo = Math.min(...slice.map(c => c.low)), hi = Math.max(...slice.map(c => c.high));
+      const rsv = hi === lo ? 50 : (candles[i].close - lo) / (hi - lo) * 100;
+      k = k * 2 / 3 + rsv / 3; d = d * 2 / 3 + k / 3;
+    }
+    K.push(i >= n - 1 ? k : null); D.push(i >= n - 1 ? d : null);
+  }
+  const i = candles.length - 1;
+  for (let j = i; j > i - 3 && j > 0; j--) {
+    if (K[j] == null || K[j - 1] == null) break;
+    if (K[j - 1] <= D[j - 1] && K[j] > D[j] && Math.min(K[j - 1], K[j]) < 30 && K[i] > D[i]) return '低檔 KD 黃金交叉';
+  }
+  const ma5 = idx => idx >= 4 ? candles.slice(idx - 4, idx + 1).reduce((s, c) => s + c.close, 0) / 5 : null;
+  if (ma5(i) != null && candles[i].close > ma5(i)) {
+    for (let j = i - 1; j >= i - 3 && j >= 4; j--) if (candles[j].close < ma5(j)) return '站回 5 日線';
+  }
+  return null;
+}
 function calcMA(candles, n) {
   if (candles.length < n) return null;
   return candles.slice(-n).reduce((s, c) => s + c.close, 0) / n;
@@ -194,10 +218,13 @@ async function main() {
       if (p.chgPct != null && p.chgPct <= -3) met++;
       if (taiex && taiex.chgPct <= -1) met++;
       if (met >= 3) {
-        const k = `${code}_dip_${today}`;
+        // 跟 App 首頁的急迫性一致：有止跌確認才是「立即買入」，不然只是「準備買入」
+        const confirm = confirmReversal(candles);
+        const k = `${code}_dip${confirm ? 'now' : ''}_${today}`;
         if (!state[k]) {
           state[k] = 1; changed = true;
-          messages.push(`📉 ${code} ${name} 買點訊號（${met}/4 項成立）\n現價 $${curr.toFixed(2)}　K=${kd.k}　MA20=${ma20 ? ma20.toFixed(2) : '—'}`);
+          const head = confirm ? `🔥 立即買入 ${code} ${name}（跌深後${confirm}）` : `⏳ 準備買入 ${code} ${name}（跌深但尚未止跌）`;
+          messages.push(`${head}\n${met}/4 項跌深條件成立　現價 $${curr.toFixed(2)}　K=${kd.k}　MA20=${ma20 ? ma20.toFixed(2) : '—'}`);
         }
       }
     }
