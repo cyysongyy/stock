@@ -498,7 +498,11 @@ async function renderTechAnalysis() {
     const rank = idx + 1;
     const rc = _rankColor(rank);
     const code = (holding.code || '').replace('.TW','').replace('.TWO','');
-    dipCache[code] = { total: result.total, color: rc.cacheColor };
+    dipCache[code] = {
+      total: result.total, color: rc.cacheColor, metCount: result.metCount,
+      k: result.kd?.k ?? null, d: result.kd?.d ?? null,
+      ma20: result.ma20 ?? null, close: result.close ?? null, chgPct: result.chgPct ?? null,
+    };
   });
   try { localStorage.setItem('tw_dip_cache', JSON.stringify(dipCache)); } catch(e) {}
 
