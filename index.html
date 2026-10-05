@@ -324,11 +324,45 @@ select option{background:var(--card2);color:var(--text)}
 .sig-label.yellow{color:#ffd700}
 .sig-label.red{color:#ff4757}
 .sig-label.grey{color:var(--sub);font-weight:400}
-.sig-dot.live{animation:sigLivePulse 1.3s ease-in-out infinite}
-@keyframes sigLivePulse{0%,100%{box-shadow:0 0 7px #00c85388;transform:scale(1)}50%{box-shadow:0 0 16px 3px #00c853cc;transform:scale(1.2)}}
-.sig-live-badge{font-size:10px;line-height:1;margin-top:1px}
-.ov-live-buy{animation:sigLiveGlow 1.6s ease-in-out infinite}
-@keyframes sigLiveGlow{0%,100%{opacity:.65}50%{opacity:1}}
+/* 買賣急迫性：等級 3 = 立即（實心＋脈動），等級 2 = 準備/留意（外框） */
+.urg-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:7px;padding:3px 4px;font-size:11px;font-weight:800;line-height:1.15;letter-spacing:.5px;cursor:pointer;min-width:34px}
+.urg-chip.buy3{background:#00c853;color:#04210f;animation:urgPulseBuy 1.2s ease-in-out infinite}
+.urg-chip.sell3{background:#ff4757;color:#fff;animation:urgPulseSell 1.2s ease-in-out infinite}
+.urg-chip.buy2{border:1.5px solid #00c853;color:#00c853}
+.urg-chip.sell2{border:1.5px solid #ffa502;color:#ffa502}
+@keyframes urgPulseBuy{0%,100%{box-shadow:0 0 0 0 #00c85399}50%{box-shadow:0 0 12px 3px #00c853aa}}
+@keyframes urgPulseSell{0%,100%{box-shadow:0 0 0 0 #ff475799}50%{box-shadow:0 0 12px 3px #ff4757aa}}
+.holding-row.urg-buy3{box-shadow:inset 4px 0 0 #00c853;background:linear-gradient(90deg,#00c8531c,var(--card) 65%)!important}
+.holding-row.urg-sell3{box-shadow:inset 4px 0 0 #ff4757;background:linear-gradient(90deg,#ff47571c,var(--card) 65%)!important}
+.holding-row.urg-buy2{box-shadow:inset 3px 0 0 #00c85388}
+.holding-row.urg-sell2{box-shadow:inset 3px 0 0 #ffa50288}
+.urg-board{margin:10px 14px 0;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 12px}
+.urg-board-title{font-size:13px;font-weight:800;margin-bottom:6px;display:flex;justify-content:space-between;align-items:baseline}
+.urg-board-title span{font-size:10px;color:var(--sub);font-weight:400}
+.urg-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;margin-top:6px;cursor:pointer;border:1px solid transparent}
+.urg-item.buy3{background:#00c85318;border-color:#00c85366}
+.urg-item.sell3{background:#ff475718;border-color:#ff475766}
+.urg-item.buy2{background:#00c8530a;border-color:#00c85333}
+.urg-item.sell2{background:#ffa5020d;border-color:#ffa50240}
+.urg-tag{flex-shrink:0;font-size:12px;font-weight:800;padding:5px 8px;border-radius:7px;white-space:nowrap}
+.urg-item.buy3 .urg-tag{background:#00c853;color:#04210f;animation:urgPulseBuy 1.2s ease-in-out infinite}
+.urg-item.sell3 .urg-tag{background:#ff4757;color:#fff;animation:urgPulseSell 1.2s ease-in-out infinite}
+.urg-item.buy2 .urg-tag{color:#00c853;border:1.5px solid #00c853}
+.urg-item.sell2 .urg-tag{color:#ffa502;border:1.5px solid #ffa502}
+.urg-main{flex:1;min-width:0}
+.urg-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.urg-reason{font-size:11px;color:var(--sub);margin-top:1px}
+.urg-meter{display:flex;gap:2px;align-items:flex-end;flex-shrink:0}
+.urg-meter i{display:block;width:4px;border-radius:2px;background:var(--border)}
+.urg-meter i:nth-child(1){height:7px}.urg-meter i:nth-child(2){height:11px}.urg-meter i:nth-child(3){height:15px}
+.urg-item.buy3 .urg-meter i.on,.urg-item.buy2 .urg-meter i.on{background:#00c853}
+.urg-item.sell3 .urg-meter i.on{background:#ff4757}.urg-item.sell2 .urg-meter i.on{background:#ffa502}
+.urg-calm{font-size:11px;color:var(--sub);padding:2px 0}
+.tm-row{font-size:12px;margin-top:6px;line-height:1.5}
+.tm-row b{color:var(--text)}
+.tm-sub{font-size:11px;color:var(--sub)}
+.tm-bar{position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,#00c853,#ffd700 50%,#ff4757);margin:4px 0 2px}
+.tm-bar i{position:absolute;top:-3px;width:4px;height:12px;border-radius:2px;background:#fff;transform:translateX(-2px)}
 /* Score Cards */
 .score-section{padding:14px}
 .score-section-title{font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
@@ -554,7 +588,7 @@ select option{background:var(--card2);color:var(--text)}
     <div class="form-group"><label>技術訊號提醒</label>
       <select id="m-signal-alert">
         <option value="">不設定</option>
-        <option value="dip_buy">📉 買點訊號轉為「值得買入」→ 低點提醒</option>
+        <option value="dip_buy">🔥 出現「立即買入」（跌深＋止跌確認）→ 低點提醒</option>
         <option value="rsi_oversold">RSI 超賣（&lt;30）→ 買入機會</option>
         <option value="rsi_overbought">RSI 超買（>70）→ 考慮賣出</option>
         <option value="macd_bull">MACD 黃金交叉 → 買入訊號</option>
@@ -1297,8 +1331,9 @@ async function runMonitorCycle(){if(!holdings.length)return;
   const dataMap={};
   Object.entries(twsePrices).forEach(([c,v])=>{const sym=c+'.TW';dataMap[sym]=dataMap[c]={symbol:sym,dates:[v.date],open:[v.price],high:[v.price],low:[v.price],close:[v.price],volume:[null],quote:{regularMarketChangePercent:v.chgPct,longName:v.name},meta:{}};});
   Object.assign(dataCache,dataMap);
-  const saved={};for(const[k,v]of Object.entries(dataCache)){const p=v.close[v.close.length-1];if(p){saved[k]={price:p,chgPct:v.quote?.regularMarketChangePercent??null,date:new Date().toLocaleDateString('zh-TW')};}}
-  localStorage.setItem('tw_price_cache',JSON.stringify(saved));priceCache=JSON.parse(localStorage.getItem('tw_price_cache')||'{}');const today=new Date().toLocaleDateString('zh-TW'),newAlerts=[];holdings.forEach(h=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';const d=dataMap[sym]||dataMap[h.code];if(!d)return;const curr=d.close[d.close.length-1];const sigs=getSignals(d);const timeStr=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});if(h.target&&curr>=h.target){const k=h.code+'_target_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'target',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 達目標 $${h.target} 💰`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}if(h.stop&&curr<=h.stop){const k=h.code+'_stop_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'stop',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 跌破停損 $${h.stop} ⚠️`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}// Price change alert (>2% intraday)
+  // 價格已在上面合併進 priceCache；以前這裡會用 dataCache 整個重建 priceCache，
+  // 這次沒抓到的股票價格會整筆消失，留下來的也全被蓋成「今天」的日期（舊價看不出來過期）
+  const today=new Date().toLocaleDateString('zh-TW'),newAlerts=[];holdings.forEach(h=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';const d=dataMap[sym]||dataMap[h.code];if(!d)return;const curr=d.close[d.close.length-1];const sigs=getSignals(d);const timeStr=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});if(h.target&&curr>=h.target){const k=h.code+'_target_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'target',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 達目標 $${h.target} 💰`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}if(h.stop&&curr<=h.stop){const k=h.code+'_stop_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'stop',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 跌破停損 $${h.stop} ⚠️`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}// Price change alert (>2% intraday)
     const chg=d.quote.regularMarketChangePercent;
     if(chg!=null&&Math.abs(chg)>=2){
       const dir=chg>0?'上漲':'下跌';
@@ -1321,7 +1356,8 @@ function checkSignalAlert(h,sigs,curr){
   if(h.signalAlert==='dip_buy'){
     const code=h.code.replace('.TW','').replace('.TWO','');
     const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
-    if(!dc||dc.color!=='green')return null;
+    const u=calcUrgency(h,curr);
+    if(!dc||!u||u.side!=='buy'||u.level<3)return null;
     // 把實際數字帶進通知裡（現價、幾項條件成立、K值、MA20、今日漲跌），
     // 不要只給一句「值得買入」就要使用者自己再回來App查——通知本身就要夠判斷
     const priceStr=curr!=null?'$'+curr.toFixed(2):(dc.close!=null?'$'+dc.close.toFixed(2):'—');
@@ -1329,7 +1365,8 @@ function checkSignalAlert(h,sigs,curr){
     if(dc.k!=null)parts.push('K='+dc.k);
     if(dc.ma20!=null)parts.push('MA20='+dc.ma20.toFixed(2));
     if(dc.chgPct!=null)parts.push('今日'+(dc.chgPct>=0?'+':'')+dc.chgPct.toFixed(2)+'%');
-    return '買點訊號轉為「值得買入」📉\n'+parts.join('　');
+    if(dc.timing?.bt?.n>=3)parts.push(`回測勝率${Math.round(dc.timing.bt.wins/dc.timing.bt.n*100)}%`);
+    return `🔥 立即買入：${u.reason}\n`+parts.join('　');
   }
   if(!sigs.length)return null;
   const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
@@ -1789,11 +1826,11 @@ async function renderPortfolio(liveDataMap){
     totalCost+=cost;if(val)totalVal+=val;
     const sigs=d?getSignals(d):[];
     const tl=getTrafficLight(h,curr,sigs);
-    return{h,i,curr,cost,val,pl,plPct,sigs,tl,isStale,staleDate,pcached};
+    const u=calcUrgency(h,curr);
+    return{h,i,curr,cost,val,pl,plPct,sigs,tl,isStale,staleDate,pcached,u};
   });
   const totalPL=totalVal-totalCost,totalPLPct=totalCost?(totalPL/totalCost*100):0;
   const staleCount=rowData.filter(r=>r.isStale).length;
-  const liveBuyNames=holdings.filter(h=>{const code=h.code.replace('.TW','').replace('.TWO','');const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;return dc&&dc.color==='green';}).map(h=>_klName(h,h.code.replace('.TW','').replace('.TWO','')));
 
   // ── Donut chart ──
   if(chartDonut){chartDonut.destroy();chartDonut=null;}
@@ -1838,7 +1875,6 @@ async function renderPortfolio(liveDataMap){
           </div>`;})():''}
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
           ${staleCount?`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${staleCount} 檔非今日報價，市值估計可能不準，點此刷新</div>`:''}
-          ${liveBuyNames.length?`<div class="ov-live-buy" style="text-align:right;font-size:10px;color:#00c853;margin-top:4px;cursor:pointer" onclick="event.stopPropagation();switchTab('analysis')">⏰ ${liveBuyNames.join('、')} 符合即時買點訊號，點此查看</div>`:''}
         </div>
       </div>
       <div class="ov-actions">
@@ -1847,14 +1883,15 @@ async function renderPortfolio(liveDataMap){
         <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}"><span class="ic">🤖</span><span class="lbl">AI 掃描庫存</span><span class="sub">智慧選股</span></div>
         <div class="ov-btn primary" onclick="openAddModal()"><span class="ic">＋</span><span class="lbl">新增持股</span><span class="sub">快速建倉</span></div>
       </div>
-    </div>`;
+    </div>
+    ${urgencyBoardHTML(rowData)}`;
   const cvs=document.getElementById('chart-donut');
   if(cvs&&typeof Chart!=='undefined'){
     chartDonut=new Chart(cvs,{type:'doughnut',data:{datasets:[{data:totalVal?[totalCost,Math.max(0,totalPL),Math.max(0,-totalPL)]:[1,0,0],backgroundColor:totalVal?['#4d9eff','#ff4757','#00d68f']:['#2a2f45'],borderColor:'#10131d',borderWidth:3,borderRadius:3,cutout:'72%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},animation:{animateRotate:true,duration:600}}});
   }
 
   // ── Table ──
-  const rows=rowData.map(({h,i,curr,cost,val,pl,plPct,tl,isStale,staleDate,pcached})=>{
+  const rows=rowData.map(({h,i,curr,cost,val,pl,plPct,tl,isStale,staleDate,pcached,u})=>{
     const plCls=pl==null?'':pl>=0?'up':'down';
     const tlDot=tl?`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${tl.light==='red'?'var(--red)':tl.light==='green'?'var(--green)':'var(--amber)'};${tl.light!=='amber'?'box-shadow:0 0 6px '+(tl.light==='red'?'var(--red)':'var(--green)')+'88':''};margin-left:4px;vertical-align:middle"></span>`:'';
     const isOpen=openDetailIdx===i;
@@ -1870,13 +1907,14 @@ async function renderPortfolio(liveDataMap){
     // Target/stop progress bars
     const tpBars=(()=>{if(!curr)return'';let out='';if(h.target&&h.target>h.cost){const pct=Math.min(100,Math.round((curr-h.cost)/(h.target-h.cost)*100));out+=`<div class="tp-bar-row">🎯<div class="tp-bar-track"><div class="tp-bar-fill target" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.target}</div>`;}if(h.stop&&h.stop<h.cost){const pct=Math.min(100,Math.round((h.cost-curr)/(h.cost-h.stop)*100));const cls=pct>70?'color:#ff4757':'';out+=`<div class="tp-bar-row" style="${cls}">🛑<div class="tp-bar-track"><div class="tp-bar-fill stop" style="width:${Math.max(0,pct)}%"></div></div>${pct}% → ${h.stop}</div>`;}return out?`<div class="tp-bar-wrap">${out}</div>`:'';})();
     return`
-      <div class="holding-row" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 44px 64px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
+      <div class="holding-row${u?' urg-'+u.side+u.level:''}" onclick="toggleDetail(${i})" style="display:grid;grid-template-columns:1fr 44px 64px 70px 80px;grid-template-rows:auto auto auto;padding:10px 14px;border-bottom:1px solid var(--border)22;cursor:pointer;background:var(--card);transition:background .15s;align-items:center">
         <div>
           <div class="hr-code">${h.code.replace('.TW','')}</div>
           <div class="hr-sname">${(()=>{const code=h.code.replace('.TW','');const n=_klName(h,code);return n!==code?n:'';})()} </div>
           ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
-        <div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>
+        ${u?`<div class="hr-sig" onclick="event.stopPropagation();openUrgencyDetail('${_hCode(h)}')">${urgencyChipHTML(u)}</div>`
+           :`<div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>`}
         <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
           <div class="hr-mkt">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
           ${isStale?`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`:''}
@@ -1910,6 +1948,7 @@ async function renderPortfolio(liveDataMap){
       </div>
       ${rows}
     </div>`;
+  _maybeUrgencyPopup(rowData);
 }
 
 function renderDetailPanel(rd){
@@ -2065,18 +2104,120 @@ function renderScoreDot(code){
   const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
   if(dc){
     const labelMap={green:'買入',yellow:'考慮',red:'觀望'};
-    const titleMap={green:'買點訊號：值得買入（即時）',yellow:'買點訊號：可考慮買入',red:'買點訊號：暫不考慮'};
+    const titleMap={green:'買點訊號：值得買入',yellow:'買點訊號：可考慮買入',red:'買點訊號：暫不考慮'};
     const shortLabel=labelMap[dc.color]||'—';
-    const isLive=dc.color==='green';
-    const dotCls='sig-dot '+dc.color+(isLive?' live':'');
-    const badge=isLive?'<div class="sig-live-badge" title="即時買點訊號">⏰</div>':'';
-    return'<div class="'+dotCls+'" title="'+(titleMap[dc.color]||'')+' ('+dc.total+'分)"></div><div class="sig-label '+dc.color+'">'+shortLabel+'</div>'+badge;
+    return'<div class="sig-dot '+dc.color+'" title="'+(titleMap[dc.color]||'')+' ('+dc.total+'分)"></div><div class="sig-label '+dc.color+'">'+shortLabel+'</div>';
   }
   const sc=scoreCache[code];
   if(!sc)return'<div class="sig-dot grey" title="計算中…"></div><div class="sig-label grey">—</div>';
   const title=sc.total>=80?'適合買入 ✓':sc.total>=60?'可考慮':'暫不建議';
   const shortLabel=sc.total>=80?'買入':sc.total>=60?'考慮':'觀望';
   return'<div class="sig-dot '+sc.color+'" title="'+title+' ('+sc.total+'分)"></div><div class="sig-label '+sc.color+'">'+shortLabel+'</div>';
+}
+// ── 買賣急迫性 ──────────────────────────────────────────────
+// 等級 3（立即）：停損/停利已觸發，或「跌深＋止跌確認」同時成立
+// 等級 2（準備/留意）：跌深但還沒止跌、接近停損、高檔 KD 死亡交叉
+// 買點的「值得買入」排名只是相對排序，這裡看的是條件真的有沒有成立
+function _hCode(h){return h.code.replace('.TW','').replace('.TWO','');}
+function _escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function _livePrice(h){const code=_hCode(h);const pc=priceCache[code]||priceCache[code+'.TW']||priceCache[h.code];return pc?.price??null;}
+function calcUrgency(h,curr){
+  const dc=(typeof dipCache!=='undefined')?dipCache[_hCode(h)]:null;
+  const t=dc&&dc.timing;
+  const U=(side,level,label,reason)=>({side,level,label,reason,short:[label.slice(0,2),label.slice(2)]});
+  if(curr!=null){
+    if(h.stop&&curr<=h.stop)return U('sell',3,'立即賣出',`已跌破停損 $${h.stop}`);
+    if(h.target&&curr>=h.target)return U('sell',3,'立即賣出',`已達停利 $${h.target}`);
+  }
+  if(t&&t.recentOversold&&t.confirm)return U('buy',3,'立即買入',`跌深後出現${t.confirm}`);
+  if(curr!=null&&h.stop&&curr<=h.stop*1.03)return U('sell',2,'考慮減碼',`距停損只剩 ${((curr/h.stop-1)*100).toFixed(1)}%`);
+  if(t&&t.deadCross)return U('sell',2,'考慮減碼','高檔 KD 死亡交叉，漲勢轉弱');
+  if(dc&&((t&&t.oversoldNow>=2)||(dc.metCount||0)>=2))return U('buy',2,'準備買入','跌深但還沒止跌，等反轉訊號');
+  return null;
+}
+function urgencyChipHTML(u){return`<div class="urg-chip ${u.side}${u.level}" title="${u.label}：${_escH(u.reason)}"><span>${u.short[0]}</span><span>${u.short[1]}</span></div>`;}
+function urgencyMeterHTML(level){return`<div class="urg-meter">${[1,2,3].map(n=>`<i class="${n<=level?'on':''}"></i>`).join('')}</div>`;}
+function _urgSort(a,b){return b.u.level-a.u.level||(a.u.side==='sell'?-1:1)-(b.u.side==='sell'?-1:1);}
+function urgencyBoardHTML(list){
+  const anyAnalyzed=holdings.some(h=>typeof dipCache!=='undefined'&&dipCache[_hCode(h)]);
+  const items=list.filter(x=>x.u).sort(_urgSort);
+  const body=items.length?items.map(({h,u})=>{const code=_hCode(h);const n=_klName(h,code);return`
+      <div class="urg-item ${u.side}${u.level}" onclick="openUrgencyDetail('${code}')">
+        <div class="urg-tag">${u.label}</div>
+        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}</div></div>
+        ${urgencyMeterHTML(u.level)}
+      </div>`;}).join('')
+    :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
+  return`<div class="urg-board"><div class="urg-board-title">⚡ 買賣急迫性<span>依急迫程度排序・點擊看細節</span></div>${body}</div>`;
+}
+// 止跌確認、回測、分批價、相對位置——首頁細節與分析頁卡片共用
+// sell=true 時是賣出訊號，不顯示止跌確認/回測/分批買進這些買進用的資訊
+function timingBlockHTML(t,sell){
+  if(!t)return'<div class="tm-row tm-sub">K 線歷史不足，無法判斷時機</div>';
+  const f=v=>v.toFixed(2),sg=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
+  let out='';
+  if(sell)out+=`<div class="tm-row">${t.deadCross?'⚠️':'⬜'} <b>高檔 KD 死亡交叉</b>　<span class="tm-sub">${t.deadCross?'漲勢轉弱':'未出現'}</span></div>`;
+  if(!sell){
+  out+=`<div class="tm-row">${t.confirm?'✅':'⬜'} <b>止跌確認</b>　${t.confirm?_escH(t.confirm):'<span class="tm-sub">尚未出現（等低檔 KD 黃金交叉或站回 5 日線）</span>'}</div>`;
+  if(t.bt){
+    const b=t.bt;
+    out+=b.n>=3
+      ?`<div class="tm-row">📊 <b>回測</b>　過去 2 年出現 ${b.n} 次，${b.wins} 次 20 個交易日後上漲（勝率 ${Math.round(b.wins/b.n*100)}%），平均 ${sg(b.avg)}<div class="tm-sub">對照：任一天買進持有 20 日，上漲機率 ${Math.round(b.baseWin)}%、平均 ${sg(b.baseAvg)}</div></div>`
+      :`<div class="tm-row">📊 <b>回測</b>　<span class="tm-sub">過去 2 年同樣訊號只出現 ${b.n} 次，樣本太少，參考性低</span></div>`;
+  }
+  if(t.tranches)out+=`<div class="tm-row">🪜 <b>分批買進</b>　${t.tranches.map((x,i)=>`$${f(x.price)}${i?`<span class="tm-sub">(${sg(x.pct)})</span>`:'<span class="tm-sub">(現價)</span>'}`).join('　')}<div class="tm-sub">各買 1/3，間距依這檔近 14 日平均波動（ATR）設定</div></div>`;
+  }
+  if(t.pos1y!=null){const p=Math.round(t.pos1y);out+=`<div class="tm-row">📍 <b>近一年價格位置</b>　${p}%（${p<25?'低檔':p>75?'高檔':'中段'}）<div class="tm-bar"><i style="left:${Math.max(0,Math.min(100,p))}%"></i></div></div>`;}
+  if(t.yld){const p=Math.round(t.yld.pct);out+=`<div class="tm-row">💰 <b>殖利率</b>　${t.yld.now.toFixed(2)}%，高於近一年 ${p}% 的時間（${p>=75?'偏便宜':p<=25?'偏貴':'普通'}）</div>`;}
+  return out;
+}
+function urgencyCardHTML(h){
+  const code=_hCode(h),n=_klName(h,code),curr=_livePrice(h),u=calcUrgency(h,curr);
+  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+  const pc=priceCache[code]||priceCache[code+'.TW']||{};
+  const chg=pc.chgPct!=null?`<span style="font-size:12px;color:${pc.chgPct<0?'var(--green)':'var(--red)'}">${pc.chgPct>=0?'+':''}${pc.chgPct.toFixed(2)}%</span>`:'';
+  const col=u?(u.side==='buy'?'#00c853':u.level===3?'#ff4757':'#ffa502'):'var(--border)';
+  const banner=u?`<div class="urg-item ${u.side}${u.level}" style="cursor:default;margin:8px 0 4px"><div class="urg-tag">${u.label}</div><div class="urg-main"><div class="urg-reason" style="color:var(--text);font-size:12px">${_escH(u.reason)}</div></div>${urgencyMeterHTML(u.level)}</div>`
+    :'<div class="tm-row tm-sub">目前沒有急迫的買賣訊號</div>';
+  const met=(dc?.items||[]).filter(i=>i.met).map(i=>`<div class="tm-row">✅ <b>${_escH(i.label)}</b>　<span class="tm-sub">${_escH(i.detail)}</span></div>`).join('');
+  const sellInfo=(h.stop||h.target)?`<div class="tm-row">🎯 <b>停利</b> ${h.target?'$'+h.target:'未設'}　🛑 <b>停損</b> ${h.stop?'$'+h.stop:'未設'}　<span class="tm-sub">成本 $${h.cost}${curr?`，目前 ${((curr/h.cost-1)*100>=0?'+':'')+((curr/h.cost-1)*100).toFixed(1)}%`:''}</span></div>`:'';
+  return`
+    <div data-urg-code="${code}" style="background:var(--card2);border:1px solid ${col}66;border-radius:12px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div style="font-size:15px;font-weight:800">${code} ${n!==code?_escH(n):''}</div>
+        <div style="font-size:15px;font-weight:700">${curr!=null?'$'+curr.toFixed(2):'—'} ${chg}</div>
+      </div>
+      ${banner}${met}${sellInfo}
+      ${timingBlockHTML(dc?.timing,u?.side==='sell')}
+      <button onclick="closeModal('modal-urgency');openKlineFor('${code}')" style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:${u&&u.level===3?col:'var(--blue)'};color:${u&&u.side==='buy'&&u.level===3?'#04210f':'#fff'};font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
+    </div>`;
+}
+function _openUrgencySheet(codes,title){
+  let ov=document.getElementById('modal-urgency');
+  if(!ov){ov=document.createElement('div');ov.id='modal-urgency';ov.className='modal-overlay';ov.onclick=e=>{if(e.target===ov)closeModal('modal-urgency');};document.body.appendChild(ov);}
+  const hs=codes.map(c=>holdings.find(h=>_hCode(h)===c)).filter(Boolean);
+  ov.innerHTML=`<div class="modal"><h3>${title}</h3>${hs.map(urgencyCardHTML).join('')}
+    <div style="font-size:10px;color:var(--sub);text-align:center">僅供參考，請自行判斷後下單</div>
+    <div class="modal-btns"><button class="btn-cancel" onclick="closeModal('modal-urgency')">知道了</button></div></div>`;
+  ov.classList.add('open');
+}
+function openUrgencyDetail(code){_openUrgencySheet([code],'⚡ 買賣時機');}
+// 盤中出現「立即」等級時直接跳出畫面；同一檔同一方向一天只跳一次
+function _maybeUrgencyPopup(list){
+  if(!isMarketOpen())return;
+  const today=new Date().toLocaleDateString('zh-TW');
+  let seen={};try{seen=JSON.parse(localStorage.getItem('tw_urg_popup_seen')||'{}');}catch(e){}
+  if(seen.date!==today)seen={date:today,keys:[]};
+  const hits=list.filter(x=>x.u&&x.u.level===3&&!seen.keys.includes(_hCode(x.h)+':'+x.u.side)).sort(_urgSort);
+  if(!hits.length)return;
+  hits.forEach(x=>seen.keys.push(_hCode(x.h)+':'+x.u.side));
+  try{localStorage.setItem('tw_urg_popup_seen',JSON.stringify(seen));}catch(e){}
+  const ov=document.getElementById('modal-urgency');
+  const shown=ov&&ov.classList.contains('open')?[...ov.querySelectorAll('[data-urg-code]')].map(e=>e.dataset.urgCode):[];
+  const codes=[...new Set([...shown,...hits.map(x=>_hCode(x.h))])];
+  const anySell=codes.some(c=>{const h=holdings.find(x=>_hCode(x)===c);return h&&calcUrgency(h,_livePrice(h))?.side==='sell';});
+  _openUrgencySheet(codes,anySell?'🚨 需要立即處理':'🔥 立即買入時機');
+  try{if(navigator.vibrate)navigator.vibrate([200,100,200]);}catch(e){}
 }
 function renderPortfolioScores(){
   const el=document.getElementById('analysis-content');if(!el)return;
@@ -2395,9 +2536,9 @@ async function loadKline(code){
   const sym=code+'.TW';
   let data=dataCache[sym]||dataCache[code];
   if(!data){
-    // 優先用 scoring_patch 已抓好的歷史快取（tw_hist_v3_<code>）
+    // 優先用 scoring_patch 已抓好的歷史快取（tw_hist_v4_<code>）
     try{
-      const raw=localStorage.getItem('tw_hist_v3_'+code);
+      const raw=localStorage.getItem('tw_hist_v4_'+code);
       if(raw){
         const cc=JSON.parse(raw);
         if(cc.data&&cc.data.length>=30){
