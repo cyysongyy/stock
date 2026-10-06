@@ -23,7 +23,9 @@
 (function _initPriceRefresh() {
   setTimeout(async () => {
     try {
-      if (typeof fetchLiveAndRender === 'function') {
+      // 開頁時 index.html 已經在抓報價了，這裡等同一個請求或沿用剛抓到的，不再另外打一次
+      if (typeof fetchLiveAndRender === 'function'
+          && !(typeof _lastPxAt !== 'undefined' && Date.now() - _lastPxAt < 15000)) {
         await fetchLiveAndRender();
       }
     } catch(e) {}
@@ -915,6 +917,7 @@ async function renderPortfolioScores() { await renderTechAnalysis(); }
    ================================================ */
 
 const _NAME_CACHE_KEY = 'tw_stock_names';
+const _nameTried = new Set();
 
 async function _fetchStockNames(codes) {
   const names = {};
@@ -986,13 +989,15 @@ function _injectPortfolioNames() {
       const r = await _origRP.apply(this, args);
       // 先用快取立即顯示
       setTimeout(_injectPortfolioNames, 60);
-      // 背景從 TWSE 更新名稱
+      // 背景從 TWSE 補名稱——只補還沒有名稱、這次開 App 還沒試過的代碼。
+      // 以前每次重畫都把全部代碼再問一次 MIS，盤中每 10 秒更新時會讓請求量加倍、容易被擋
       try {
-        const holdings = _spHoldings();
-        const codes = holdings
+        let known = {};
+        try { known = JSON.parse(localStorage.getItem(_NAME_CACHE_KEY) || '{}'); } catch(e) {}
+        const codes = _spHoldings()
           .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
-          .filter(Boolean);
-        if (codes.length) _fetchStockNames(codes).then(_injectPortfolioNames);
+          .filter(c => c && !known[c] && !_nameTried.has(c));
+        if (codes.length) { codes.forEach(c => _nameTried.add(c)); _fetchStockNames(codes).then(_injectPortfolioNames); }
       } catch(e) {}
       return r;
     };
@@ -1001,14 +1006,16 @@ function _injectPortfolioNames() {
   // 頁面載入後也補一次（處理 renderPortfolio 在 patch 前就執行的情況）
   window.addEventListener('load', () => setTimeout(async () => {
     try {
-      const holdings = _spHoldings();
-      const codes = holdings
+      let known = {};
+      try { known = JSON.parse(localStorage.getItem(_NAME_CACHE_KEY) || '{}'); } catch(e) {}
+      const codes = _spHoldings()
         .map(h => (h.code || '').replace('.TW', '').replace('.TWO', ''))
-        .filter(Boolean);
+        .filter(c => c && !known[c] && !_nameTried.has(c));
       if (codes.length) {
+        codes.forEach(c => _nameTried.add(c));
         await _fetchStockNames(codes);
-        _injectPortfolioNames();
       }
+      _injectPortfolioNames();
     } catch(e) {}
   }, 2000));
 })();

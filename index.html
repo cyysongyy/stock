@@ -362,6 +362,13 @@ select option{background:var(--card2);color:var(--text)}
 .sig-sugg b{font-size:12px;color:#00c853;font-weight:800}
 .sig-sugg.stale b{color:var(--amber)}
 .sig-basis{font-size:9px;color:var(--sub);margin-top:1px}
+.hr-mkt.px-up{animation:pxFlashUp 1.6s ease-out}
+.hr-mkt.px-down{animation:pxFlashDown 1.6s ease-out}
+@keyframes pxFlashUp{0%{background:#ff475755;color:#ff4757}100%{background:transparent}}
+@keyframes pxFlashDown{0%{background:#00d68f55;color:#00d68f}100%{background:transparent}}
+.hr-mkt{border-radius:5px}
+.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00c853;margin-right:3px;vertical-align:middle;animation:liveBlink 1.2s ease-in-out infinite}
+@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.25}}
 .tm-row{font-size:12px;margin-top:6px;line-height:1.5}
 .tm-row b{color:var(--text)}
 .tm-sub{font-size:11px;color:var(--sub)}
@@ -1221,24 +1228,64 @@ function showApp(name){
   fetchLiveAndRender(); // background fetch
   loadUSPredict(); // 美股前日收盤 → 台股預測
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
-  // Auto-refresh every 30s during market hours (9:00-13:30)
-  let _refreshSec=30;
+  startLiveLoop();
+}
+// 盤中即時更新：每 10 秒只問 TWSE MIS（最快、最即時），每 60 秒跑一次含所有備援的完整更新。
+// 切換使用者會再呼叫 showApp，迴圈只能啟動一次，否則請求量會倍增被 MIS 擋
+const FAST_SEC=10,FULL_SEC=60;
+let _liveLoopStarted=false;
+function startLiveLoop(){
+  if(_liveLoopStarted)return;_liveLoopStarted=true;
+  let fastLeft=FAST_SEC,fullLeft=FULL_SEC;
   setInterval(()=>{
     const cd=document.getElementById('refresh-countdown');
-    if(isMarketOpen()&&holdings.length){
-      _refreshSec--;
-      if(cd)cd.textContent=_refreshSec>0?`${_refreshSec}s`:'';
-      if(_refreshSec<=0){_refreshSec=30;fetchLiveAndRender();}
-    }else{_refreshSec=30;if(cd)cd.textContent='';}
+    if(!isMarketOpen()||!holdings.length||document.visibilityState!=='visible'){fastLeft=FAST_SEC;if(cd)cd.textContent='';return;}
+    fastLeft--;fullLeft--;
+    if(cd)cd.textContent=fastLeft>0?`${fastLeft}s`:'';
+    if(fullLeft<=0){fullLeft=FULL_SEC;fastLeft=FAST_SEC;fetchLiveAndRender();}
+    else if(fastLeft<=0){fastLeft=FAST_SEC;fastPriceTick();}
   },1000);
+  // 從背景切回 App 時馬上更新一次，不用等倒數
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&isMarketOpen()&&holdings.length)fastPriceTick();});
 }
-async function fetchLiveAndRender(manual){
+// 記住每檔是上市（tse）還是上櫃（otc），快速更新時一次就問對市場
+const _misMkt=(()=>{try{return JSON.parse(localStorage.getItem('tw_mis_mkt')||'{}');}catch(e){return{};}})();
+function _rememberMkt(prices,mkt){
+  let ch=false;for(const c of Object.keys(prices))if(_misMkt[c]!==mkt){_misMkt[c]=mkt;ch=true;}
+  if(ch)try{localStorage.setItem('tw_mis_mkt',JSON.stringify(_misMkt));}catch(e){}
+}
+let _lastPxAt=0,_fastBusy=false;
+async function fastPriceTick(){
+  if(_fastBusy)return;_fastBusy=true;
+  try{
+    const codes=[...new Set([...holdings.map(h=>_hCode(h)),...watchlist.map(w=>w.code)])];
+    const tse=codes.filter(c=>_misMkt[c]!=='otc'),otc=codes.filter(c=>_misMkt[c]==='otc');
+    const [a,b]=await Promise.all([tse.length?fetchMisChunked('tse',tse):{prices:{}},otc.length?fetchMisChunked('otc',otc):{prices:{}}]);
+    _rememberMkt(a.prices,'tse');_rememberMkt(b.prices,'otc');
+    const got={...a.prices,...b.prices};
+    if(Object.keys(got).length){
+      Object.assign(priceCache,got);
+      localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
+      _lastPxAt=Date.now();
+      renderPortfolio();
+    }
+  }catch(e){}finally{_fastBusy=false;}
+}
+// 開 App 時好幾個地方（開頁、背景分析啟動、自動監控）會幾乎同時要報價；
+// 同一時間只跑一個完整更新，其他呼叫共用結果，避免短時間大量請求被 MIS 擋
+let _liveFetchP=null;
+function fetchLiveAndRender(manual){
+  if(_liveFetchP)return _liveFetchP;
+  _liveFetchP=_fetchLiveAndRender(manual).finally(()=>{_liveFetchP=null;});
+  return _liveFetchP;
+}
+async function _fetchLiveAndRender(manual){
   const pill=document.getElementById('monitor-pill');
   if(pill)pill.style.opacity='0.6';
   if(!holdings.length&&!watchlist.length)return;
   // Use TWSE direct API for current prices (works on iPhone without proxy)
   const codes=[...new Set([...holdings.map(h=>h.code.replace('.TW','')),...watchlist.map(w=>w.code)])];
-  const partialRender=p=>{Object.assign(priceCache,p);localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));renderPortfolio();};
+  const partialRender=p=>{_lastPxAt=Date.now();Object.assign(priceCache,p);localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));renderPortfolio();};
   let twsePrices=await fetchTWSEPrices(codes,partialRender);
   let resolvedCount=Object.keys(twsePrices).length;
   // 每一層（TSE/OTC/公開API/備援）同時失敗，通常是開頁當下網路還沒就緒（手機剛喚醒、
@@ -1256,6 +1303,7 @@ async function fetchLiveAndRender(manual){
     showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}）`,10000);
   }
   // Merge into priceCache
+  if(resolvedCount)_lastPxAt=Date.now();
   Object.assign(priceCache,twsePrices);
   localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
   // Build minimal dataMap for renderPortfolio (prices only, no chart data)
@@ -1345,7 +1393,11 @@ function scheduleNext(){if(!monitorOn)return;const mins=parseInt(document.getEle
 function updateMonitorUI(){const pill=document.getElementById('monitor-pill'),dot=document.getElementById('pulse-dot'),lbl=document.getElementById('pill-label'),btn=document.getElementById('monitor-toggle-btn');if(monitorOn){pill.className='monitor-pill on';dot.className='pulse';lbl.textContent='監控中';btn.textContent='■ 停止';btn.className='mp-btn stop';}else{pill.className='monitor-pill off';dot.className='pulse off';lbl.textContent='監控';btn.textContent='▶ 開始';btn.className='mp-btn start';}}
 async function runMonitorCycle(){if(!holdings.length)return;
   const codes=[...new Set(holdings.map(h=>h.code.replace('.TW','')))];
-  const twsePrices=await fetchTWSEPrices(codes);
+  // 盤中每 10 秒已經在更新報價，15 秒內抓過就直接用，不再重複打 MIS
+  if(_liveFetchP)await _liveFetchP.catch(()=>{});
+  const twsePrices=Date.now()-_lastPxAt<15000
+    ?Object.fromEntries(codes.filter(c=>priceCache[c]).map(c=>[c,priceCache[c]]))
+    :await fetchTWSEPrices(codes);
   Object.assign(priceCache,twsePrices);localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
   const dataMap={};
   Object.entries(twsePrices).forEach(([c,v])=>{const sym=c+'.TW';dataMap[sym]=dataMap[c]={symbol:sym,dates:[v.date],open:[v.price],high:[v.price],low:[v.price],close:[v.price],volume:[null],quote:{regularMarketChangePercent:v.chgPct,longName:v.name},meta:{}};});
@@ -1676,13 +1728,13 @@ async function fetchTWSEPrices(codes,onPartial){
   const prices={};
   const dbg=window._lastPriceFetchDebug={at:new Date().toLocaleTimeString('zh-TW',{hour12:false})};
   const tse=await fetchMisChunked('tse',codes);
-  Object.assign(prices,tse.prices);
+  Object.assign(prices,tse.prices);_rememberMkt(tse.prices,'tse');
   dbg.tse=tse.errs.length?('部分失敗('+tse.errs.join(',')+') ok '+tse.count+' 筆'):('ok ('+tse.count+' 筆)');
   // Try OTC for any not found
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
     const otc=await fetchMisChunked('otc',missing);
-    Object.assign(prices,otc.prices);
+    Object.assign(prices,otc.prices);_rememberMkt(otc.prices,'otc');
     dbg.otc=otc.errs.length?('部分失敗('+otc.errs.join(',')+') ok '+otc.count+' 筆'):('ok ('+otc.count+' 筆)');
   }
   // 批次查詢時 MIS 偶爾整批出錯或漏回某幾檔，剩下沒抓到的逐檔各自再問一次（平行、很快），
@@ -1691,7 +1743,7 @@ async function fetchTWSEPrices(codes,onPartial){
   if(retry.length&&retry.length<=12){
     for(const mkt of ['tse','otc']){
       const left=retry.filter(c=>!prices[c]);if(!left.length)break;
-      const r=await fetchMisChunked(mkt,left,1);Object.assign(prices,r.prices);
+      const r=await fetchMisChunked(mkt,left,1);Object.assign(prices,r.prices);_rememberMkt(r.prices,mkt);
     }
     dbg.retry='ok ('+retry.filter(c=>prices[c]).length+'/'+retry.length+' 筆)';
   }
@@ -1835,6 +1887,25 @@ function getTrafficLight(h, curr, sigs) {
 }
 
 // ── Portfolio render ──────────────────────────────────────────
+// 價格跳動時閃一下（紅漲綠跌）。一次更新可能觸發好幾次重畫，所以記住「何時變的」，
+// 重畫時用負的 animation-delay 接續同一段閃爍，而不是每次重畫都重閃或被切斷
+const _pxChg={};const PX_FLASH_MS=1600;
+function pxFlashClass(code,curr){
+  if(curr==null)return'';
+  const prev=_pxChg[code];
+  if(!prev){_pxChg[code]={px:curr,at:0,dir:''};return'';}
+  if(prev.px!==curr){prev.dir=curr>prev.px?'px-up':'px-down';prev.px=curr;prev.at=Date.now();}
+  return prev.at&&Date.now()-prev.at<PX_FLASH_MS?prev.dir:'';
+}
+function pxFlashStyle(code){const p=_pxChg[code];return p&&p.at&&Date.now()-p.at<PX_FLASH_MS?`animation-delay:-${Date.now()-p.at}ms`:'';}
+function liveStatusHTML(){
+  if(!_lastPxAt)return'';
+  const t=new Date(_lastPxAt).toLocaleTimeString('zh-TW',{hour12:false});
+  return isMarketOpen()&&Date.now()-_lastPxAt<90000
+    ?`<span class="live-dot"></span><span style="color:#00c853;font-weight:700">即時</span> ${t}・`
+    :`更新於 ${t}・`;
+}
+let _donutDrawn=false;
 async function renderPortfolio(liveDataMap){
   const ovWrap=document.getElementById('overview-wrap');
   const hlWrap=document.getElementById('holdings-wrap');
@@ -1908,7 +1979,7 @@ async function renderPortfolio(liveDataMap){
             <span class="ov-label"><span class="ov-dot" style="background:var(--purple);border-radius:2px"></span>已實現</span>
             <span class="ov-val ${rp>=0?'up':'down'}">${mask((rp>=0?'+':'')+Math.round(rp).toLocaleString())}</span>
           </div>`;})():''}
-          <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">幣別：新台幣</div>
+          <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">${liveStatusHTML()}幣別：新台幣</div>
           ${staleCount?`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${staleCount} 檔非今日報價，市值估計可能不準，點此刷新</div>`:''}
         </div>
       </div>
@@ -1922,7 +1993,8 @@ async function renderPortfolio(liveDataMap){
     ${urgencyBoardHTML(rowData)}`;
   const cvs=document.getElementById('chart-donut');
   if(cvs&&typeof Chart!=='undefined'){
-    chartDonut=new Chart(cvs,{type:'doughnut',data:{datasets:[{data:totalVal?[totalCost,Math.max(0,totalPL),Math.max(0,-totalPL)]:[1,0,0],backgroundColor:totalVal?['#4d9eff','#ff4757','#00d68f']:['#2a2f45'],borderColor:'#10131d',borderWidth:3,borderRadius:3,cutout:'72%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},animation:{animateRotate:true,duration:600}}});
+    chartDonut=new Chart(cvs,{type:'doughnut',data:{datasets:[{data:totalVal?[totalCost,Math.max(0,totalPL),Math.max(0,-totalPL)]:[1,0,0],backgroundColor:totalVal?['#4d9eff','#ff4757','#00d68f']:['#2a2f45'],borderColor:'#10131d',borderWidth:3,borderRadius:3,cutout:'72%'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},animation:_donutDrawn?false:{animateRotate:true,duration:600}}});
+    _donutDrawn=true;
   }
 
   // ── Table ──
@@ -1953,7 +2025,7 @@ async function renderPortfolio(liveDataMap){
         ${u?`<div class="hr-sig" onclick="event.stopPropagation();openUrgencyDetail('${_hCode(h)}')">${urgencyChipHTML(u)}${u.side==='buy'?sugg:''}</div>`
            :`<div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}${(typeof dipCache!=='undefined'&&dipCache[_hCode(h)]?.color==='green')?sugg:''}</div>`}
         <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
-          <div class="hr-mkt">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
+          <div class="hr-mkt ${pxFlashClass(_hCode(h),curr)}" style="${pxFlashStyle(_hCode(h))}">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
           ${isStale?`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`:''}
           <div class="hr-avg">${h.cost.toFixed(2)}</div>
         </div>
