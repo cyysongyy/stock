@@ -41,6 +41,14 @@
 let dipCache = (function () {
   try { return JSON.parse(localStorage.getItem('tw_dip_cache') || '{}'); } catch (e) { return {}; }
 })();
+// 首頁第一次畫面在本檔載入前就畫了，當時還讀不到 dipCache（訊號點、建議價、急迫性都空著），
+// 要等網路報價回來才會重畫；這裡一載入就用快取重畫一次
+setTimeout(() => {
+  try {
+    if (typeof renderPortfolio === 'function' && typeof holdings !== 'undefined' && holdings.length
+        && document.getElementById('app')?.style.display === 'block') renderPortfolio();
+  } catch (e) {}
+}, 0);
 
 /* ════════════════════════════════════════════════
    1. Fetch 工具
