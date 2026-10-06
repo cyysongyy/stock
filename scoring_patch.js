@@ -271,13 +271,6 @@ function _backtest(c, K, D, MA5, MA20) {
   };
 }
 
-// 台股升降單位，分批建議價要是真的掛得出去的價格
-function _tickDown(p, isETF) {
-  const t = isETF ? (p < 50 ? 0.01 : 0.05)
-    : p < 10 ? 0.01 : p < 50 ? 0.05 : p < 100 ? 0.1 : p < 500 ? 0.5 : p < 1000 ? 1 : 5;
-  return Math.round(Math.floor(p / t + 1e-9) * t * 100) / 100;
-}
-
 function _yieldStats(c, divs) {
   if (!divs || !divs.length || c.length < 250) return null;
   const YEAR = 365 * 86400, firstTs = c[0].ts, series = [];
@@ -307,9 +300,10 @@ function _timingSignals(candles, divs, livePrice, isETF) {
     if (hi > lo) pos1y = (candles[i].close - lo) / (hi - lo) * 100;
   }
 
+  // 第 1 批 = 現價往下 1 個 ATR（平均一天的波動，掛這個價一兩天內常會成交），也就是首頁顯示的建議價
   const atr = _atr(candles);
-  const tranches = atr && livePrice
-    ? [0, 2, 4].map(m => { const p = _tickDown(livePrice - m * atr, isETF); return { price: p, pct: (p / livePrice - 1) * 100 }; })
+  const tranches = atr && livePrice && typeof twTickDown === 'function'
+    ? [1, 2.5, 4].map(m => { const p = twTickDown(livePrice - m * atr, isETF); return { price: p, pct: (p / livePrice - 1) * 100 }; })
     : null;
 
   return {
@@ -319,7 +313,7 @@ function _timingSignals(candles, divs, livePrice, isETF) {
       confirm: _confirmAt(candles, K, D, MA5, i),
       deadCross: _deadCrossAt(K, D, i),
       bt: n >= 60 ? _backtest(candles, K, D, MA5, MA20) : null,
-      tranches, pos1y, yld: _yieldStats(candles, divs),
+      tranches, atr, isETF, pos1y, yld: _yieldStats(candles, divs),
     },
   };
 }
@@ -581,7 +575,7 @@ function _card(holding, result, rank) {
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1e1e30">
         <div style="font-size:11px;font-weight:700;color:#e8c84a">⏱ 買賣時機</div>
         ${u ? `<div class="tm-row" style="color:${u.side === 'buy' ? '#00c853' : u.level === 3 ? '#ff4757' : '#ffa502'}"><b style="color:inherit">${u.label}</b>　${_spEsc(u.reason)}</div>` : ''}
-        ${typeof timingBlockHTML === 'function' ? timingBlockHTML(result.timing, u?.side === 'sell') : ''}
+        ${typeof timingBlockHTML === 'function' ? timingBlockHTML(result.timing, u?.side === 'sell', _livePrice(holding)) : ''}
       </div>
       <div style="font-size:10px;color:#444;margin-top:8px;padding-top:8px;border-top:1px solid #1e1e30">
         現價 ${result.close ? result.close.toFixed(2) : '—'}

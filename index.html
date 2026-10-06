@@ -358,6 +358,8 @@ select option{background:var(--card2);color:var(--text)}
 .urg-item.buy3 .urg-meter i.on,.urg-item.buy2 .urg-meter i.on{background:#00c853}
 .urg-item.sell3 .urg-meter i.on{background:#ff4757}.urg-item.sell2 .urg-meter i.on{background:#ffa502}
 .urg-calm{font-size:11px;color:var(--sub);padding:2px 0}
+.sig-sugg{display:flex;flex-direction:column;align-items:center;font-size:9px;color:var(--sub);line-height:1.15;margin-top:2px;white-space:nowrap}
+.sig-sugg b{font-size:12px;color:#00c853;font-weight:800}
 .tm-row{font-size:12px;margin-top:6px;line-height:1.5}
 .tm-row b{color:var(--text)}
 .tm-sub{font-size:11px;color:var(--sub)}
@@ -1026,6 +1028,20 @@ let currentData=null;
 let chartDonut=null,chartPrice=null,chartRSI=null,chartMACD=null,chartVol=null;
 let monitorOn=false,monitorTimer=null,countdownTimer=null,nextRefreshAt=0,dataCache={};
 let priceCache=JSON.parse(localStorage.getItem('tw_price_cache')||'{}');
+// 所有即時報價都存在純代碼（0050）底下，但舊版手動校正與監控重建會另外寫一份 0050.TW，
+// 讀取時又優先讀 .TW，結果舊價格永遠蓋住新報價、一直顯示「非今日報價」。
+// 開啟時把 .TW/.TWO 併回純代碼（保留日期較新的那份），之後只用純代碼
+(function _normalizePriceCache(){
+  const day=e=>Date.parse(e&&e.date||'')||0;
+  let changed=false;
+  for(const k of Object.keys(priceCache)){
+    const m=k.match(/^(.+)\.TWO?$/);if(!m)continue;
+    const bare=m[1],old=priceCache[k],cur=priceCache[bare];
+    if(!cur||day(old)>day(cur))priceCache[bare]={...(cur||{}),...old};
+    delete priceCache[k];changed=true;
+  }
+  if(changed)localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
+})();
 let alertedKeys=new Set();
 let openDetailIdx=-1;
 let hideBalance=localStorage.getItem('tw_hide_balance')==='1';
@@ -1220,7 +1236,8 @@ async function fetchLiveAndRender(manual){
   if(!holdings.length&&!watchlist.length)return;
   // Use TWSE direct API for current prices (works on iPhone without proxy)
   const codes=[...new Set([...holdings.map(h=>h.code.replace('.TW','')),...watchlist.map(w=>w.code)])];
-  let twsePrices=await fetchTWSEPrices(codes);
+  const partialRender=p=>{Object.assign(priceCache,p);localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));renderPortfolio();};
+  let twsePrices=await fetchTWSEPrices(codes,partialRender);
   let resolvedCount=Object.keys(twsePrices).length;
   // 每一層（TSE/OTC/公開API/備援）同時失敗，通常是開頁當下網路還沒就緒（手機剛喚醒、
   // 剛切換 WiFi/行動網路），先重試一次再判定真的失敗，避免把暫時性問題當成全部失敗嚇到使用者
@@ -1640,7 +1657,10 @@ async function fetchMisChunked(mkt,codeList,chunkSize){
       const j=await r.json();
       count+=(j.msgArray||[]).length;
       (j.msgArray||[]).forEach(s=>{
-        const price=parseFloat(s.z)||parseFloat(s.y)||null;
+        // z（成交價）在最近一筆快照沒有成交時是 "-"，以前直接退回昨收 y，盤中會顯示成昨天的價格；
+        // 改用最佳買賣價中間價，都沒有才用昨收
+        const b0=parseFloat((s.b||'').split('_')[0])||null,a0=parseFloat((s.a||'').split('_')[0])||null;
+        const price=parseFloat(s.z)||(b0&&a0?Math.round((b0+a0)/2*100)/100:(b0||a0))||parseFloat(s.y)||null;
         const prev=parseFloat(s.y)||null;
         const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
         const chgPct=price&&prev?((price-prev)/prev*100):null;
@@ -1650,7 +1670,7 @@ async function fetchMisChunked(mkt,codeList,chunkSize){
   }));
   return{prices,count,errs};
 }
-async function fetchTWSEPrices(codes){
+async function fetchTWSEPrices(codes,onPartial){
   const prices={};
   const dbg=window._lastPriceFetchDebug={at:new Date().toLocaleTimeString('zh-TW',{hour12:false})};
   const tse=await fetchMisChunked('tse',codes);
@@ -1663,6 +1683,9 @@ async function fetchTWSEPrices(codes){
     Object.assign(prices,otc.prices);
     dbg.otc=otc.errs.length?('部分失敗('+otc.errs.join(',')+') ok '+otc.count+' 筆'):('ok ('+otc.count+' 筆)');
   }
+  // MIS 通常 1 秒內回來，後面的備援（公開 API、Yahoo/代理）可能要等好幾十秒；
+  // 先把已經拿到的報價交出去畫面，不用整批等最慢的那層
+  if(onPartial&&Object.keys(prices).length&&codes.some(c=>!prices[c])){try{onPartial({...prices});}catch(e){}}
   // TWSE/TPEx official Open Data API — reliable fallback for whatever MIS missed.
   // Unlike mis.twse.com.tw (which can silently return nothing without a warmed-up
   // session cookie — a cookie cross-site fetch can't rely on under Safari's
@@ -1892,6 +1915,8 @@ async function renderPortfolio(liveDataMap){
 
   // ── Table ──
   const rows=rowData.map(({h,i,curr,cost,val,pl,plPct,tl,isStale,staleDate,pcached,u})=>{
+    // 報價不是今天的就不給建議價，避免拿舊價格算出錯的掛單價
+    const sugg=isStale?'':suggestHTML(suggestBuyPrice(h,curr));
     const plCls=pl==null?'':pl>=0?'up':'down';
     const tlDot=tl?`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${tl.light==='red'?'var(--red)':tl.light==='green'?'var(--green)':'var(--amber)'};${tl.light!=='amber'?'box-shadow:0 0 6px '+(tl.light==='red'?'var(--red)':'var(--green)')+'88':''};margin-left:4px;vertical-align:middle"></span>`:'';
     const isOpen=openDetailIdx===i;
@@ -1913,8 +1938,8 @@ async function renderPortfolio(liveDataMap){
           <div class="hr-sname">${(()=>{const code=h.code.replace('.TW','');const n=_klName(h,code);return n!==code?n:'';})()} </div>
           ${aiVerdictHTML(h.code.replace('.TW',''))}
         </div>
-        ${u?`<div class="hr-sig" onclick="event.stopPropagation();openUrgencyDetail('${_hCode(h)}')">${urgencyChipHTML(u)}</div>`
-           :`<div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}</div>`}
+        ${u?`<div class="hr-sig" onclick="event.stopPropagation();openUrgencyDetail('${_hCode(h)}')">${urgencyChipHTML(u)}${u.side==='buy'?sugg:''}</div>`
+           :`<div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}${(typeof dipCache!=='undefined'&&dipCache[_hCode(h)]?.color==='green')?sugg:''}</div>`}
         <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
           <div class="hr-mkt">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
           ${isStale?`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`:''}
@@ -2034,14 +2059,14 @@ async function aiAnalyzeSingle(code,idx){
 // 手動校正市價——自動抓價偶爾會跟實際有落差，且不一定能馬上重新抓到正確值；
 // 讓使用者直接打正確的價格進去先用，下次自動刷新抓到新報價時會自然覆蓋掉
 function manualPriceCorrect(code){
-  const sym=code.includes('.')?code:code+'.TW';
-  const pc=priceCache[sym]||priceCache[code]||{};
+  code=code.replace(/\.TWO?$/,'');
+  const pc=priceCache[code]||{};
   const input=prompt('手動校正 '+code+' 現價\n（僅供目前顯示用，下次自動刷新會被最新報價覆蓋）',pc.price?pc.price.toFixed(2):'');
   if(input===null)return;
   const val=parseFloat(input);
   if(isNaN(val)||val<=0){showToast('請輸入有效的價格');return;}
   const prev=pc.prev!=null?pc.prev:(pc.price||null);
-  priceCache[sym]={...pc,price:val,chgPct:prev?((val-prev)/prev*100):(pc.chgPct??null),date:new Date().toLocaleDateString('zh-TW')};
+  priceCache[code]={...pc,price:val,chgPct:prev?((val-prev)/prev*100):(pc.chgPct??null),date:new Date().toLocaleDateString('zh-TW')};
   localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
   renderPortfolio();
   showToast(code+' 現價已校正為 '+val.toFixed(2)+' ✓');
@@ -2135,16 +2160,31 @@ function calcUrgency(h,curr){
   if(dc&&((t&&t.oversoldNow>=2)||(dc.metCount||0)>=2))return U('buy',2,'準備買入','跌深但還沒止跌，等反轉訊號');
   return null;
 }
+// 台股升降單位（ETF 另有規則），建議價要是真的掛得出去的價格
+function twTickDown(p,isETF){
+  const t=isETF?(p<50?0.01:0.05):p<10?0.01:p<50?0.05:p<100?0.1:p<500?0.5:p<1000?1:5;
+  return Math.round(Math.floor(p/t+1e-9)*t*100)/100;
+}
+function fmtTick(p){return p>=500?String(Math.round(p)):p.toFixed(2);}
+// 建議掛單價＝現價往下 1 個 ATR（近 14 日平均一天的波動），和分批買進的第 1 批相同
+function suggestBuyPrice(h,curr){
+  const dc=(typeof dipCache!=='undefined')?dipCache[_hCode(h)]:null;
+  const atr=dc?.timing?.atr;
+  if(!curr||!atr)return null;
+  const p=twTickDown(curr-atr,dc.timing.isETF??/^00/.test(_hCode(h)));
+  return p>0&&p<curr?p:null;
+}
+function suggestHTML(p){return p==null?'':`<div class="sig-sugg" title="建議掛單價：現價往下一天的平均波動">建議<b>${fmtTick(p)}</b></div>`;}
 function urgencyChipHTML(u){return`<div class="urg-chip ${u.side}${u.level}" title="${u.label}：${_escH(u.reason)}"><span>${u.short[0]}</span><span>${u.short[1]}</span></div>`;}
 function urgencyMeterHTML(level){return`<div class="urg-meter">${[1,2,3].map(n=>`<i class="${n<=level?'on':''}"></i>`).join('')}</div>`;}
 function _urgSort(a,b){return b.u.level-a.u.level||(a.u.side==='sell'?-1:1)-(b.u.side==='sell'?-1:1);}
 function urgencyBoardHTML(list){
   const anyAnalyzed=holdings.some(h=>typeof dipCache!=='undefined'&&dipCache[_hCode(h)]);
   const items=list.filter(x=>x.u).sort(_urgSort);
-  const body=items.length?items.map(({h,u})=>{const code=_hCode(h);const n=_klName(h,code);return`
+  const body=items.length?items.map(({h,u,curr,isStale})=>{const code=_hCode(h);const n=_klName(h,code);const sp=u.side==='buy'&&!isStale?suggestBuyPrice(h,curr):null;return`
       <div class="urg-item ${u.side}${u.level}" onclick="openUrgencyDetail('${code}')">
         <div class="urg-tag">${u.label}</div>
-        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}</div></div>
+        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}${sp!=null?`　<span style="color:#00c853;font-weight:700">建議 $${fmtTick(sp)}</span>`:''}</div></div>
         ${urgencyMeterHTML(u.level)}
       </div>`;}).join('')
     :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
@@ -2152,7 +2192,7 @@ function urgencyBoardHTML(list){
 }
 // 止跌確認、回測、分批價、相對位置——首頁細節與分析頁卡片共用
 // sell=true 時是賣出訊號，不顯示止跌確認/回測/分批買進這些買進用的資訊
-function timingBlockHTML(t,sell){
+function timingBlockHTML(t,sell,curr){
   if(!t)return'<div class="tm-row tm-sub">K 線歷史不足，無法判斷時機</div>';
   const f=v=>v.toFixed(2),sg=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
   let out='';
@@ -2165,7 +2205,9 @@ function timingBlockHTML(t,sell){
       ?`<div class="tm-row">📊 <b>回測</b>　過去 2 年出現 ${b.n} 次，${b.wins} 次 20 個交易日後上漲（勝率 ${Math.round(b.wins/b.n*100)}%），平均 ${sg(b.avg)}<div class="tm-sub">對照：任一天買進持有 20 日，上漲機率 ${Math.round(b.baseWin)}%、平均 ${sg(b.baseAvg)}</div></div>`
       :`<div class="tm-row">📊 <b>回測</b>　<span class="tm-sub">過去 2 年同樣訊號只出現 ${b.n} 次，樣本太少，參考性低</span></div>`;
   }
-  if(t.tranches)out+=`<div class="tm-row">🪜 <b>分批買進</b>　${t.tranches.map((x,i)=>`$${f(x.price)}${i?`<span class="tm-sub">(${sg(x.pct)})</span>`:'<span class="tm-sub">(現價)</span>'}`).join('　')}<div class="tm-sub">各買 1/3，間距依這檔近 14 日平均波動（ATR）設定</div></div>`;
+  // 用畫面上的即時價重算，分析時存下的價格可能已經過時
+  const tr=(t.atr&&curr)?[1,2.5,4].map(m=>{const p=twTickDown(curr-m*t.atr,t.isETF);return{price:p,pct:(p/curr-1)*100};}):t.tranches;
+  if(tr)out+=`<div class="tm-row">🪜 <b>分批買進</b>　${tr.map((x,i)=>`$${fmtTick(x.price)}<span class="tm-sub">(${sg(x.pct)}${i?'':'，建議價'})</span>`).join('　')}<div class="tm-sub">各買 1/3；第 1 批＝現價往下 1 天平均波動（ATR），之後 2.5、4 倍</div></div>`;
   }
   if(t.pos1y!=null){const p=Math.round(t.pos1y);out+=`<div class="tm-row">📍 <b>近一年價格位置</b>　${p}%（${p<25?'低檔':p>75?'高檔':'中段'}）<div class="tm-bar"><i style="left:${Math.max(0,Math.min(100,p))}%"></i></div></div>`;}
   if(t.yld){const p=Math.round(t.yld.pct);out+=`<div class="tm-row">💰 <b>殖利率</b>　${t.yld.now.toFixed(2)}%，高於近一年 ${p}% 的時間（${p>=75?'偏便宜':p<=25?'偏貴':'普通'}）</div>`;}
@@ -2188,7 +2230,7 @@ function urgencyCardHTML(h){
         <div style="font-size:15px;font-weight:700">${curr!=null?'$'+curr.toFixed(2):'—'} ${chg}</div>
       </div>
       ${banner}${met}${sellInfo}
-      ${timingBlockHTML(dc?.timing,u?.side==='sell')}
+      ${timingBlockHTML(dc?.timing,u?.side==='sell',curr)}
       <button onclick="closeModal('modal-urgency');openKlineFor('${code}')" style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:${u&&u.level===3?col:'var(--blue)'};color:${u&&u.side==='buy'&&u.level===3?'#04210f':'#fff'};font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
     </div>`;
 }
