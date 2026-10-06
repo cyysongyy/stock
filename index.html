@@ -361,6 +361,7 @@ select option{background:var(--card2);color:var(--text)}
 .sig-sugg{display:flex;flex-direction:column;align-items:center;font-size:9px;color:var(--sub);line-height:1.15;margin-top:2px;white-space:nowrap}
 .sig-sugg b{font-size:12px;color:#00c853;font-weight:800}
 .sig-sugg.stale b{color:var(--amber)}
+.sig-basis{font-size:9px;color:var(--sub);margin-top:1px}
 .tm-row{font-size:12px;margin-top:6px;line-height:1.5}
 .tm-row b{color:var(--text)}
 .tm-sub{font-size:11px;color:var(--sub)}
@@ -1927,7 +1928,7 @@ async function renderPortfolio(liveDataMap){
   // ── Table ──
   const rows=rowData.map(({h,i,curr,cost,val,pl,plPct,tl,isStale,staleDate,pcached,u})=>{
     // 報價不是今天的也照樣給建議價，但改成橘色「≈」，提醒是用舊價格算的
-    const sugg=suggestHTML(suggestBuyPrice(h,curr),isStale);
+    const sugg=suggestHTML(suggestBuyPrice(h,curr),isStale,_hCode(h));
     const plCls=pl==null?'':pl>=0?'up':'down';
     const tlDot=tl?`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${tl.light==='red'?'var(--red)':tl.light==='green'?'var(--green)':'var(--amber)'};${tl.light!=='amber'?'box-shadow:0 0 6px '+(tl.light==='red'?'var(--red)':'var(--green)')+'88':''};margin-left:4px;vertical-align:middle"></span>`:'';
     const isOpen=openDetailIdx===i;
@@ -2177,46 +2178,93 @@ function twTickDown(p,isETF){
   return Math.round(Math.floor(p/t+1e-9)*t*100)/100;
 }
 function fmtTick(p){return p>=500?String(Math.round(p)):p.toFixed(2);}
-// 建議掛單價＝現價往下 1 個 ATR（近 14 日平均一天的波動），和分批買進的第 1 批相同
 function _atrOf(hi,lo,cl,n=14){
   const m=cl.length;if(m<n+1)return null;
   let s=0;for(let i=m-n;i<m;i++)s+=Math.max(hi[i]-lo[i],Math.abs(hi[i]-cl[i-1]),Math.abs(lo[i]-cl[i-1]));
   const a=s/n;return a>0?a:null;
 }
-const _atrMemo={};
-// ATR 來源依序：分析結果 → 已快取的 K 線歷史 → 已載入的 K 線圖資料。
-// 分析要下載每檔 2 年歷史，手機上可能要等很久甚至失敗，不能讓建議價卡在那裡
-function _atrFor(code){
-  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
-  if(dc?.timing?.atr)return dc.timing.atr;
+// K 線來源：已快取的 2 年歷史 → 已載入的 K 線圖資料（分析下載很慢時也能先算）
+const _histMemo={};
+function _histFor(code){
   try{
     const raw=localStorage.getItem('tw_hist_v4_'+code);
     if(raw){
-      if(_atrMemo[code]&&_atrMemo[code].len===raw.length)return _atrMemo[code].atr;
-      const d=JSON.parse(raw).data||[];
-      const atr=_atrOf(d.map(c=>c.high),d.map(c=>c.low),d.map(c=>c.close));
-      _atrMemo[code]={len:raw.length,atr};
-      if(atr)return atr;
+      if(_histMemo[code]?.len===raw.length)return _histMemo[code].h;
+      const d=(JSON.parse(raw).data||[]).filter(c=>c.close>0&&c.high>0&&c.low>0);
+      const h=d.length>=20?{high:d.map(c=>c.high),low:d.map(c=>c.low),close:d.map(c=>c.close)}:null;
+      _histMemo[code]={len:raw.length,h};
+      if(h)return h;
     }
   }catch(e){}
   const dd=dataCache[code+'.TW']||dataCache[code];
-  if(dd&&dd.close&&dd.close.length>15)return _atrOf(dd.high,dd.low,dd.close);
+  if(dd&&dd.close&&dd.close.length>=20){
+    const idx=dd.close.map((v,i)=>i).filter(i=>dd.close[i]>0&&dd.high[i]>0&&dd.low[i]>0);
+    if(idx.length>=20)return{high:idx.map(i=>dd.high[i]),low:idx.map(i=>dd.low[i]),close:idx.map(i=>dd.close[i])};
+  }
   return null;
 }
-// 建議掛單價＝現價往下 1 個 ATR（近 14 日平均一天的波動），和分批買進的第 1 批相同；
-// 完全沒有 K 線資料時，先用一般日波動（ETF 1%、個股 1.5%）估，畫面標「≈」
-function suggestBuyPrice(h,curr){
-  if(!curr)return null;
-  const code=_hCode(h),isETF=/^00/.test(code);
-  let atr=_atrFor(code),est=false;
-  if(!atr){atr=curr*(isETF?0.01:0.015);est=true;}
-  const p=twTickDown(curr-atr,isETF);
-  return p>0&&p<curr?{price:p,est}:null;
+function _atrFor(code){
+  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+  if(dc?.timing?.atr)return dc.timing.atr;
+  const H=_histFor(code);return H?_atrOf(H.high,H.low,H.close):null;
 }
-function suggestHTML(sp,stale){
+// 現價下方的支撐價位（技術分析常用、看得到算法的價位），由近到遠；
+// 相差不到 0.6% 的合併成一個（例如月線剛好就在近月低點附近）
+function supportLevels(code,curr){
+  const H=_histFor(code);if(!H||!curr)return null;
+  const cl=H.close,lo=H.low,n=cl.length;
+  const ma=k=>n>=k?cl.slice(-k).reduce((a,b)=>a+b,0)/k:null;
+  // 最近低點不含最後一根（今天/最新一根還在變動）
+  const minLow=k=>{const w=lo.slice(Math.max(0,n-1-k),n-1);return w.length>=Math.min(k,10)?Math.min(...w):null;};
+  const ma20=ma(20),sd=ma20?Math.sqrt(cl.slice(-20).reduce((t,v)=>t+(v-ma20)**2,0)/20):null;
+  const cands=[
+    {label:'月線',full:'月線＝近 20 日平均收盤價',v:ma20},
+    {label:'季線',full:'季線＝近 60 日平均收盤價',v:ma(60)},
+    {label:'近月低',full:'近一個月（20 個交易日）最低價',v:minLow(20)},
+    {label:'近季低',full:'近三個月（60 個交易日）最低價',v:minLow(60)},
+    {label:'布林下緣',full:'布林通道下緣＝月線 − 2 個標準差（價格約 95% 時間在此之上）',v:ma20&&sd?ma20-2*sd:null},
+  ].filter(c=>c.v&&c.v<curr&&c.v>=curr*0.85).sort((a,b)=>b.v-a.v);
+  const out=[];
+  for(const c of cands){
+    const last=out[out.length-1];
+    if(last&&(last.v-c.v)/last.v<0.006){last.labels.push(c.label);last.fulls.push(c.full);}
+    else out.push({v:c.v,labels:[c.label],fulls:[c.full]});
+  }
+  return out;
+}
+// 建議價＝最近的支撐價位（第 1 批），再往下的支撐當第 2、3 批；
+// 現價已跌破所有支撐時，改用「往下 1 天平均波動（ATR）」；沒有 K 線資料就不亂給數字
+function buyPlan(code,curr){
+  if(!curr)return null;
+  const isETF=/^00/.test(code),lv=supportLevels(code,curr);
+  if(lv==null)return null;
+  const atr=_atrFor(code);
+  const steps=[];
+  for(const l of lv){
+    const p=twTickDown(l.v,isETF);
+    if(p>0&&p<curr&&!steps.some(x=>x.price===p))steps.push({price:p,basis:l.labels.join('/'),full:l.fulls.join('；')});
+    if(steps.length===3)break;
+  }
+  if(atr){
+    let base=steps.length?steps[steps.length-1].price:curr;
+    while(steps.length<3){
+      const p=twTickDown(base-(steps.length?1.5:1)*atr,isETF);
+      if(!(p>0))break;
+      steps.push({price:p,basis:'日波動',full:`往下 ${steps.length?'1.5':'1'} 天平均波動（近 14 日 ATR ${atr.toFixed(2)}）`});
+      base=p;
+    }
+  }
+  return steps.length?{steps,isETF}:null;
+}
+function suggestBuyPrice(h,curr){
+  const plan=buyPlan(_hCode(h),curr);
+  return plan?plan.steps[0]:(curr?{pending:true}:null);
+}
+function suggestHTML(sp,stale,code){
   if(sp==null)return'';
-  const tip='建議掛單價：現價往下一天的平均波動'+(sp.est?'（K 線資料還沒載入，暫用一般波動估算）':'')+(stale?'（報價不是今天的，以最後一次成功抓到的價格估算）':'');
-  return`<div class="sig-sugg${stale?' stale':''}" title="${tip}">建議<b>${sp.est||stale?'≈':''}${fmtTick(sp.price)}</b></div>`;
+  if(sp.pending)return`<div class="sig-sugg" title="K 線資料載入後才算得出有依據的建議價">建議<span class="sig-basis">計算中</span></div>`;
+  const tip=`建議掛單價 ${fmtTick(sp.price)}：${sp.full}`+(stale?'（報價不是今天的，以最後一次成功抓到的價格判斷）':'');
+  return`<div class="sig-sugg${stale?' stale':''}" title="${_escH(tip)}"${code?` onclick="event.stopPropagation();openUrgencyDetail('${code}')"`:''}>建議<b>${stale?'≈':''}${fmtTick(sp.price)}</b><span class="sig-basis">${_escH(sp.basis)}</span></div>`;
 }
 function urgencyChipHTML(u){return`<div class="urg-chip ${u.side}${u.level}" title="${u.label}：${_escH(u.reason)}"><span>${u.short[0]}</span><span>${u.short[1]}</span></div>`;}
 function urgencyMeterHTML(level){return`<div class="urg-meter">${[1,2,3].map(n=>`<i class="${n<=level?'on':''}"></i>`).join('')}</div>`;}
@@ -2227,7 +2275,7 @@ function urgencyBoardHTML(list){
   const body=items.length?items.map(({h,u,curr,isStale})=>{const code=_hCode(h);const n=_klName(h,code);const sp=u.side==='buy'?suggestBuyPrice(h,curr):null;return`
       <div class="urg-item ${u.side}${u.level}" onclick="openUrgencyDetail('${code}')">
         <div class="urg-tag">${u.label}</div>
-        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}${sp!=null?`　<span style="color:${isStale?'var(--amber)':'#00c853'};font-weight:700">建議 ${sp.est||isStale?'≈':''}$${fmtTick(sp.price)}</span>`:''}</div></div>
+        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}${sp&&!sp.pending?`　<span style="color:${isStale?'var(--amber)':'#00c853'};font-weight:700">建議 ${isStale?'≈':''}$${fmtTick(sp.price)}（${_escH(sp.basis)}）</span>`:''}</div></div>
         ${urgencyMeterHTML(u.level)}
       </div>`;}).join('')
     :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
@@ -2235,9 +2283,12 @@ function urgencyBoardHTML(list){
 }
 // 止跌確認、回測、分批價、相對位置——首頁細節與分析頁卡片共用
 // sell=true 時是賣出訊號，不顯示止跌確認/回測/分批買進這些買進用的資訊
-function timingBlockHTML(t,sell,curr){
-  if(!t)return'<div class="tm-row tm-sub">K 線歷史不足，無法判斷時機</div>';
-  const f=v=>v.toFixed(2),sg=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
+function timingBlockHTML(t,sell,curr,code){
+  const sg=v=>(v>=0?'+':'')+v.toFixed(1)+'%';
+  // 分批買進只需要 K 線，不必等背景分析（止跌確認、回測）跑完
+  const plan=!sell&&code?buyPlan(code,curr):null;
+  const planHTML=plan?`<div class="tm-row">🪜 <b>分批買進</b>（各 1/3，第 1 批＝建議價）${plan.steps.map((x,i)=>`<div style="margin-top:2px">第 ${i+1} 批 <b>$${fmtTick(x.price)}</b> <span class="tm-sub">${sg((x.price/curr-1)*100)}・${_escH(x.basis)}</span></div>`).join('')}<div class="tm-sub" style="margin-top:3px">依據：${[...new Set(plan.steps.map(x=>x.full))].map(_escH).join('；')}</div></div>`:'';
+  if(!t)return planHTML+'<div class="tm-row tm-sub">止跌確認、回測分析中（需要 K 線歷史）</div>';
   let out='';
   if(sell)out+=`<div class="tm-row">${t.deadCross?'⚠️':'⬜'} <b>高檔 KD 死亡交叉</b>　<span class="tm-sub">${t.deadCross?'漲勢轉弱':'未出現'}</span></div>`;
   if(!sell){
@@ -2248,9 +2299,7 @@ function timingBlockHTML(t,sell,curr){
       ?`<div class="tm-row">📊 <b>回測</b>　過去 2 年出現 ${b.n} 次，${b.wins} 次 20 個交易日後上漲（勝率 ${Math.round(b.wins/b.n*100)}%），平均 ${sg(b.avg)}<div class="tm-sub">對照：任一天買進持有 20 日，上漲機率 ${Math.round(b.baseWin)}%、平均 ${sg(b.baseAvg)}</div></div>`
       :`<div class="tm-row">📊 <b>回測</b>　<span class="tm-sub">過去 2 年同樣訊號只出現 ${b.n} 次，樣本太少，參考性低</span></div>`;
   }
-  // 用畫面上的即時價重算，分析時存下的價格可能已經過時
-  const tr=(t.atr&&curr)?[1,2.5,4].map(m=>{const p=twTickDown(curr-m*t.atr,t.isETF);return{price:p,pct:(p/curr-1)*100};}):t.tranches;
-  if(tr)out+=`<div class="tm-row">🪜 <b>分批買進</b>　${tr.map((x,i)=>`$${fmtTick(x.price)}<span class="tm-sub">(${sg(x.pct)}${i?'':'，建議價'})</span>`).join('　')}<div class="tm-sub">各買 1/3；第 1 批＝現價往下 1 天平均波動（ATR），之後 2.5、4 倍</div></div>`;
+  out+=planHTML;
   }
   if(t.pos1y!=null){const p=Math.round(t.pos1y);out+=`<div class="tm-row">📍 <b>近一年價格位置</b>　${p}%（${p<25?'低檔':p>75?'高檔':'中段'}）<div class="tm-bar"><i style="left:${Math.max(0,Math.min(100,p))}%"></i></div></div>`;}
   if(t.yld){const p=Math.round(t.yld.pct);out+=`<div class="tm-row">💰 <b>殖利率</b>　${t.yld.now.toFixed(2)}%，高於近一年 ${p}% 的時間（${p>=75?'偏便宜':p<=25?'偏貴':'普通'}）</div>`;}
@@ -2273,7 +2322,7 @@ function urgencyCardHTML(h){
         <div style="font-size:15px;font-weight:700">${curr!=null?'$'+curr.toFixed(2):'—'} ${chg}</div>
       </div>
       ${banner}${met}${sellInfo}
-      ${timingBlockHTML(dc?.timing,u?.side==='sell',curr)}
+      ${timingBlockHTML(dc?.timing,u?.side==='sell',curr,code)}
       <button onclick="closeModal('modal-urgency');openKlineFor('${code}')" style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:${u&&u.level===3?col:'var(--blue)'};color:${u&&u.side==='buy'&&u.level===3?'#04210f':'#fff'};font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
     </div>`;
 }

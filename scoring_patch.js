@@ -294,7 +294,7 @@ function _yieldStats(c, divs) {
   return { now, pct: series.filter(y => y <= now).length / series.length * 100 };
 }
 
-function _timingSignals(candles, divs, livePrice, isETF) {
+function _timingSignals(candles, divs, isETF) {
   const n = candles.length;
   if (n < 30) return { timing: null };
   const { K, D } = _kdSeries(candles);
@@ -308,11 +308,8 @@ function _timingSignals(candles, divs, livePrice, isETF) {
     if (hi > lo) pos1y = (candles[i].close - lo) / (hi - lo) * 100;
   }
 
-  // 第 1 批 = 現價往下 1 個 ATR（平均一天的波動，掛這個價一兩天內常會成交），也就是首頁顯示的建議價
+  // 建議價與分批價由 index.html 的 buyPlan 依支撐價位計算，這裡只提供 ATR 給「跌破所有支撐」時備用
   const atr = _atr(candles);
-  const tranches = atr && livePrice && typeof twTickDown === 'function'
-    ? [1, 2.5, 4].map(m => { const p = twTickDown(livePrice - m * atr, isETF); return { price: p, pct: (p / livePrice - 1) * 100 }; })
-    : null;
 
   return {
     timing: {
@@ -321,7 +318,7 @@ function _timingSignals(candles, divs, livePrice, isETF) {
       confirm: _confirmAt(candles, K, D, MA5, i),
       deadCross: _deadCrossAt(K, D, i),
       bt: n >= 60 ? _backtest(candles, K, D, MA5, MA20) : null,
-      tranches, atr, isETF, pos1y, yld: _yieldStats(candles, divs),
+      atr, isETF, pos1y, yld: _yieldStats(candles, divs),
     },
   };
 }
@@ -508,7 +505,7 @@ async function scoreBuySignal(holding, taiex, navMap) {
   const metCount = items.filter(i => i.met).length;
 
   return { total, metCount, items, kd, ma20, close, chgPct, taiex, hasHistory,
-           ..._timingSignals(candles, hist.divs, curPrice || close, isETF) };
+           ..._timingSignals(candles, hist.divs, isETF) };
 }
 
 /* ════════════════════════════════════════════════
@@ -583,7 +580,7 @@ function _card(holding, result, rank) {
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1e1e30">
         <div style="font-size:11px;font-weight:700;color:#e8c84a">⏱ 買賣時機</div>
         ${u ? `<div class="tm-row" style="color:${u.side === 'buy' ? '#00c853' : u.level === 3 ? '#ff4757' : '#ffa502'}"><b style="color:inherit">${u.label}</b>　${_spEsc(u.reason)}</div>` : ''}
-        ${typeof timingBlockHTML === 'function' ? timingBlockHTML(result.timing, u?.side === 'sell', _livePrice(holding)) : ''}
+        ${typeof timingBlockHTML === 'function' ? timingBlockHTML(result.timing, u?.side === 'sell', _livePrice(holding), code) : ''}
       </div>
       <div style="font-size:10px;color:#444;margin-top:8px;padding-top:8px;border-top:1px solid #1e1e30">
         現價 ${result.close ? result.close.toFixed(2) : '—'}
