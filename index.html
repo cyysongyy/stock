@@ -2167,14 +2167,42 @@ function twTickDown(p,isETF){
 }
 function fmtTick(p){return p>=500?String(Math.round(p)):p.toFixed(2);}
 // 建議掛單價＝現價往下 1 個 ATR（近 14 日平均一天的波動），和分批買進的第 1 批相同
-function suggestBuyPrice(h,curr){
-  const dc=(typeof dipCache!=='undefined')?dipCache[_hCode(h)]:null;
-  const atr=dc?.timing?.atr;
-  if(!curr||!atr)return null;
-  const p=twTickDown(curr-atr,dc.timing.isETF??/^00/.test(_hCode(h)));
-  return p>0&&p<curr?p:null;
+function _atrOf(hi,lo,cl,n=14){
+  const m=cl.length;if(m<n+1)return null;
+  let s=0;for(let i=m-n;i<m;i++)s+=Math.max(hi[i]-lo[i],Math.abs(hi[i]-cl[i-1]),Math.abs(lo[i]-cl[i-1]));
+  const a=s/n;return a>0?a:null;
 }
-function suggestHTML(p){return p==null?'':`<div class="sig-sugg" title="建議掛單價：現價往下一天的平均波動">建議<b>${fmtTick(p)}</b></div>`;}
+const _atrMemo={};
+// ATR 來源依序：分析結果 → 已快取的 K 線歷史 → 已載入的 K 線圖資料。
+// 分析要下載每檔 2 年歷史，手機上可能要等很久甚至失敗，不能讓建議價卡在那裡
+function _atrFor(code){
+  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+  if(dc?.timing?.atr)return dc.timing.atr;
+  try{
+    const raw=localStorage.getItem('tw_hist_v4_'+code);
+    if(raw){
+      if(_atrMemo[code]&&_atrMemo[code].len===raw.length)return _atrMemo[code].atr;
+      const d=JSON.parse(raw).data||[];
+      const atr=_atrOf(d.map(c=>c.high),d.map(c=>c.low),d.map(c=>c.close));
+      _atrMemo[code]={len:raw.length,atr};
+      if(atr)return atr;
+    }
+  }catch(e){}
+  const dd=dataCache[code+'.TW']||dataCache[code];
+  if(dd&&dd.close&&dd.close.length>15)return _atrOf(dd.high,dd.low,dd.close);
+  return null;
+}
+// 建議掛單價＝現價往下 1 個 ATR（近 14 日平均一天的波動），和分批買進的第 1 批相同；
+// 完全沒有 K 線資料時，先用一般日波動（ETF 1%、個股 1.5%）估，畫面標「≈」
+function suggestBuyPrice(h,curr){
+  if(!curr)return null;
+  const code=_hCode(h),isETF=/^00/.test(code);
+  let atr=_atrFor(code),est=false;
+  if(!atr){atr=curr*(isETF?0.01:0.015);est=true;}
+  const p=twTickDown(curr-atr,isETF);
+  return p>0&&p<curr?{price:p,est}:null;
+}
+function suggestHTML(sp){return sp==null?'':`<div class="sig-sugg" title="建議掛單價：現價往下一天的平均波動${sp.est?'（K 線資料還沒載入，暫用一般波動估算）':''}">建議<b>${sp.est?'≈':''}${fmtTick(sp.price)}</b></div>`;}
 function urgencyChipHTML(u){return`<div class="urg-chip ${u.side}${u.level}" title="${u.label}：${_escH(u.reason)}"><span>${u.short[0]}</span><span>${u.short[1]}</span></div>`;}
 function urgencyMeterHTML(level){return`<div class="urg-meter">${[1,2,3].map(n=>`<i class="${n<=level?'on':''}"></i>`).join('')}</div>`;}
 function _urgSort(a,b){return b.u.level-a.u.level||(a.u.side==='sell'?-1:1)-(b.u.side==='sell'?-1:1);}
@@ -2184,7 +2212,7 @@ function urgencyBoardHTML(list){
   const body=items.length?items.map(({h,u,curr,isStale})=>{const code=_hCode(h);const n=_klName(h,code);const sp=u.side==='buy'&&!isStale?suggestBuyPrice(h,curr):null;return`
       <div class="urg-item ${u.side}${u.level}" onclick="openUrgencyDetail('${code}')">
         <div class="urg-tag">${u.label}</div>
-        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}${sp!=null?`　<span style="color:#00c853;font-weight:700">建議 $${fmtTick(sp)}</span>`:''}</div></div>
+        <div class="urg-main"><div class="urg-name">${code} ${n!==code?_escH(n):''}</div><div class="urg-reason">${_escH(u.reason)}${sp!=null?`　<span style="color:#00c853;font-weight:700">建議 ${sp.est?'≈':''}$${fmtTick(sp.price)}</span>`:''}</div></div>
         ${urgencyMeterHTML(u.level)}
       </div>`;}).join('')
     :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
