@@ -65,6 +65,7 @@
 - Chart.js 4.4.1（走勢圖）
 - Tesseract.js 5（OCR 圖片匯入）
 - Google Apps Script（Sheet 同步，需自行部署）
+- Google Apps Script 即時報價中繼（選用，選單「⚡ 即時報價加速」內有程式碼與部署步驟；iPhone 直連 TWSE MIS 常失敗時改由它代抓）
 - Service Worker + Web App Manifest（PWA 離線快取）
 
 ---
