@@ -367,6 +367,8 @@ select option{background:var(--card2);color:var(--text)}
 @keyframes pxFlashUp{0%{background:#ff475755;color:#ff4757}100%{background:transparent}}
 @keyframes pxFlashDown{0%{background:#00d68f55;color:#00d68f}100%{background:transparent}}
 .hr-mkt{border-radius:5px}
+.spin-ic{display:inline-block;animation:spinIc 1s linear infinite}
+@keyframes spinIc{to{transform:rotate(360deg)}}
 .live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00c853;margin-right:3px;vertical-align:middle;animation:liveBlink 1.2s ease-in-out infinite}
 @keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.25}}
 .tm-row{font-size:12px;margin-top:6px;line-height:1.5}
@@ -1276,7 +1278,9 @@ async function fastPriceTick(){
 let _liveFetchP=null;
 function fetchLiveAndRender(manual){
   if(_liveFetchP)return _liveFetchP;
-  _liveFetchP=_fetchLiveAndRender(manual).finally(()=>{_liveFetchP=null;});
+  _liveFetchP=_fetchLiveAndRender(manual).finally(()=>{_liveFetchP=null;renderPortfolio();});
+  // 讓還沒更新的那幾檔先顯示「更新中」，而不是一打開就看到「非今日報價」
+  setTimeout(()=>{if(_liveFetchP)renderPortfolio();},0);
   return _liveFetchP;
 }
 async function _fetchLiveAndRender(manual){
@@ -1300,7 +1304,7 @@ async function _fetchLiveAndRender(manual){
     showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}`,8000);
   }else if(manual&&resolvedCount<codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}）`,10000);
+    showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} MIS代理:${d.misProxy||'—'} Yahoo:${d.fallback||'—'} 公開API:${d.openapi||'—'}）`,10000);
   }
   // Merge into priceCache
   if(resolvedCount)_lastPxAt=Date.now();
@@ -1662,6 +1666,8 @@ function renderUSPredict(d,updating,stale){
 async function fetchOpenAPIPrices(codes){
   const prices={};
   const want=new Set(codes);
+  // 上市、上櫃兩份資料同時抓（以前要等上市那份下載完才開始抓上櫃）
+  const otcP=fetchT('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',20000).then(r=>r.ok?r.json():[]).catch(()=>[]);
   try{
     const r=await fetchT('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',20000);
     if(r.ok){
@@ -1674,22 +1680,13 @@ async function fetchOpenAPIPrices(codes){
       });
     }
   }catch(e){}
-  const missing=codes.filter(c=>!prices[c]);
-  if(missing.length){
-    const wantOtc=new Set(missing);
-    try{
-      const r=await fetchT('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',20000);
-      if(r.ok){
-        const arr=await r.json();
-        (arr||[]).forEach(s=>{
-          const code=s.SecuritiesCompanyCode;
-          if(!wantOtc.has(code))return;
-          const p=parseFloat((s.Close||'').replace(/,/g,''))||null;
-          if(p)prices[code]={price:p,chgPct:null,name:s.CompanyName||code,date:new Date().toLocaleDateString('zh-TW')};
-        });
-      }
-    }catch(e){}
-  }
+  const arr=await otcP;
+  (arr||[]).forEach(s=>{
+    const code=s.SecuritiesCompanyCode;
+    if(!want.has(code)||prices[code])return;
+    const p=parseFloat((s.Close||'').replace(/,/g,''))||null;
+    if(p)prices[code]={price:p,chgPct:null,name:s.CompanyName||code,date:new Date().toLocaleDateString('zh-TW')};
+  });
   return prices;
 }
 // ── TWSE MIS API — no proxy needed, works on iPhone ────────
@@ -1697,6 +1694,18 @@ async function fetchOpenAPIPrices(codes){
 // TWSE MIS is known to silently truncate/omit entries when a single request
 // joins too many ex_ch symbols together — split into small chunks and fetch
 // them in parallel instead of one big combined query.
+function _parseMisQuote(s){
+  // z（成交價）在最近一筆快照沒有成交時是 "-"，以前直接退回昨收 y，盤中會顯示成昨天的價格；
+  // 改用最佳買賣價中間價，都沒有才用昨收
+  const b0=parseFloat((s.b||'').split('_')[0])||null,a0=parseFloat((s.a||'').split('_')[0])||null;
+  const price=parseFloat(s.z)||(b0&&a0?Math.round((b0+a0)/2*100)/100:(b0||a0))||parseFloat(s.y)||null;
+  if(!price)return null;
+  const prev=parseFloat(s.y)||null;
+  const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
+  return{price,chgPct:prev?((price-prev)/prev*100):null,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
+}
+// MIS 正常 1 秒內回應；等太久代表這次連不上（iPhone Safari 常見），早點放棄改走其他來源
+const MIS_TIMEOUT=5000;
 async function fetchMisChunked(mkt,codeList,chunkSize){
   chunkSize=chunkSize||4;
   const chunks=[];
@@ -1706,72 +1715,73 @@ async function fetchMisChunked(mkt,codeList,chunkSize){
   await Promise.all(chunks.map(async chunk=>{
     const exch=chunk.map(c=>mkt+'_'+c+'.tw').join('|');
     try{
-      const r=await fetchT('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0',8000);
+      const r=await fetchT('https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(exch)+'&json=1&delay=0',MIS_TIMEOUT);
       if(!r.ok){errs.push('HTTP '+r.status);return;}
       const j=await r.json();
       count+=(j.msgArray||[]).length;
-      (j.msgArray||[]).forEach(s=>{
-        // z（成交價）在最近一筆快照沒有成交時是 "-"，以前直接退回昨收 y，盤中會顯示成昨天的價格；
-        // 改用最佳買賣價中間價，都沒有才用昨收
-        const b0=parseFloat((s.b||'').split('_')[0])||null,a0=parseFloat((s.a||'').split('_')[0])||null;
-        const price=parseFloat(s.z)||(b0&&a0?Math.round((b0+a0)/2*100)/100:(b0||a0))||parseFloat(s.y)||null;
-        const prev=parseFloat(s.y)||null;
-        const open=parseFloat(s.o)||null,high=parseFloat(s.h)||null,low=parseFloat(s.l)||null,vol=parseInt(s.v)||0;
-        const chgPct=price&&prev?((price-prev)/prev*100):null;
-        if(price)prices[s.c]={price,chgPct,name:s.n,date:new Date().toLocaleDateString('zh-TW'),open,high,low,vol,prev};
-      });
+      (j.msgArray||[]).forEach(s=>{const q=_parseMisQuote(s);if(q)prices[s.c]=q;});
     }catch(e){errs.push(e.message);}
   }));
   return{prices,count,errs};
 }
-async function fetchTWSEPrices(codes,onPartial){
+// MIS 經 CORS 代理：iPhone Safari 直接連 MIS 常拿不到資料（需要第三方 cookie），
+// 代理在伺服器端抓就沒有這個限制。上市/上櫃一起問，MIS 只會回有效的那個
+async function fetchMisViaProxy(codes){
   const prices={};
+  const syms=codes.flatMap(c=>{const m=_misMkt[c];return m?[m+'_'+c+'.tw']:['tse_'+c+'.tw','otc_'+c+'.tw'];});
+  const chunks=[];for(let i=0;i<syms.length;i+=8)chunks.push(syms.slice(i,i+8));
+  await Promise.all(chunks.map(async ch=>{
+    const base='https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch='+encodeURIComponent(ch.join('|'))+'&json=1&delay=0';
+    const urls=['https://api.allorigins.win/raw?url='+encodeURIComponent(base),'https://corsproxy.io/?'+encodeURIComponent(base)];
+    // 兩個代理同時問，誰先回有資料就用誰
+    await new Promise(done=>{
+      let left=urls.length;
+      urls.forEach(u=>fetchT(u,10000).then(r=>r.ok?r.text():'').then(t=>{
+        if(t&&t[0]!=='<'){const j=JSON.parse(t);(j.msgArray||[]).forEach(s=>{const q=_parseMisQuote(s);if(q){prices[s.c]=q;_rememberMkt({[s.c]:1},s.ex==='otc'?'otc':'tse');}});if((j.msgArray||[]).length)done();}
+      }).catch(()=>{}).finally(()=>{if(--left===0)done();}));
+    });
+  }));
+  return prices;
+}
+async function fetchTWSEPrices(codes,onPartial){
+  const prices={},rank={};
   const dbg=window._lastPriceFetchDebug={at:new Date().toLocaleTimeString('zh-TW',{hour12:false})};
-  const tse=await fetchMisChunked('tse',codes);
-  Object.assign(prices,tse.prices);_rememberMkt(tse.prices,'tse');
+  // 來源可信度：MIS 直連 4 > MIS 代理 3 > Yahoo 2 > 公開資料（只有收盤價）1；
+  // 各來源平行跑，先回來的先顯示，較即時的來源晚到也會蓋過去
+  const apply=(part,r)=>{
+    const upd={};
+    for(const[c,v]of Object.entries(part)){if(codes.includes(c)&&(rank[c]||0)<r){prices[c]=v;rank[c]=r;upd[c]=v;}}
+    if(onPartial&&Object.keys(upd).length&&codes.some(c=>!prices[c]||rank[c]<4)){try{onPartial(upd);}catch(e){}}
+    return Object.keys(upd).length;
+  };
+  // ① MIS 直連：已知上市/上櫃的直接問對市場，不知道的兩邊同時問（不再先上市、失敗才上櫃）
+  const tseCodes=codes.filter(c=>_misMkt[c]!=='otc'),otcCodes=codes.filter(c=>_misMkt[c]!=='tse');
+  const [tse,otc]=await Promise.all([tseCodes.length?fetchMisChunked('tse',tseCodes):{prices:{},count:0,errs:[]},otcCodes.length?fetchMisChunked('otc',otcCodes):{prices:{},count:0,errs:[]}]);
+  _rememberMkt(tse.prices,'tse');_rememberMkt(otc.prices,'otc');
   dbg.tse=tse.errs.length?('部分失敗('+tse.errs.join(',')+') ok '+tse.count+' 筆'):('ok ('+tse.count+' 筆)');
-  // Try OTC for any not found
-  const missing=codes.filter(c=>!prices[c]);
-  if(missing.length){
-    const otc=await fetchMisChunked('otc',missing);
-    Object.assign(prices,otc.prices);_rememberMkt(otc.prices,'otc');
-    dbg.otc=otc.errs.length?('部分失敗('+otc.errs.join(',')+') ok '+otc.count+' 筆'):('ok ('+otc.count+' 筆)');
-  }
-  // 批次查詢時 MIS 偶爾整批出錯或漏回某幾檔，剩下沒抓到的逐檔各自再問一次（平行、很快），
-  // 不要直接掉到後面又慢又常失敗的備援
+  dbg.otc=otc.errs.length?('部分失敗('+otc.errs.join(',')+') ok '+otc.count+' 筆'):('ok ('+otc.count+' 筆)');
+  apply({...tse.prices,...otc.prices},4);
+  // 批次查詢偶爾漏回某幾檔：MIS 有回應時，漏掉的逐檔再問一次（平行、很快）；
+  // MIS 根本沒回應就不要再浪費時間重試
+  const misAlive=tse.count+otc.count>0;
   const retry=codes.filter(c=>!prices[c]);
-  if(retry.length&&retry.length<=12){
-    for(const mkt of ['tse','otc']){
-      const left=retry.filter(c=>!prices[c]);if(!left.length)break;
-      const r=await fetchMisChunked(mkt,left,1);Object.assign(prices,r.prices);_rememberMkt(r.prices,mkt);
-    }
+  if(misAlive&&retry.length&&retry.length<=12){
+    const [rt,ro]=await Promise.all([fetchMisChunked('tse',retry.filter(c=>_misMkt[c]!=='otc'),1),fetchMisChunked('otc',retry.filter(c=>_misMkt[c]!=='tse'),1)]);
+    _rememberMkt(rt.prices,'tse');_rememberMkt(ro.prices,'otc');
+    apply({...rt.prices,...ro.prices},4);
     dbg.retry='ok ('+retry.filter(c=>prices[c]).length+'/'+retry.length+' 筆)';
   }
-  // MIS 通常 1 秒內回來，後面的備援（公開 API、Yahoo/代理）可能要等好幾十秒；
-  // 先把已經拿到的報價交出去畫面，不用整批等最慢的那層
-  if(onPartial&&Object.keys(prices).length&&codes.some(c=>!prices[c])){try{onPartial({...prices});}catch(e){}}
-  // TWSE/TPEx official Open Data API — reliable fallback for whatever MIS missed.
-  // Unlike mis.twse.com.tw (which can silently return nothing without a warmed-up
-  // session cookie — a cookie cross-site fetch can't rely on under Safari's
-  // tracking prevention anyway), these endpoints are published for public,
-  // cross-origin use and respond with real CORS headers on a plain fetch —
-  // no proxy, no cookies. Only end-of-day data, but far better than "—".
-  const afterOtc=codes.filter(c=>!prices[c]);
-  if(afterOtc.length){
-    const op=await fetchOpenAPIPrices(afterOtc);
-    dbg.openapi='ok ('+Object.keys(op).length+'/'+afterOtc.length+' 筆)';
-    Object.assign(prices,op);
-  }
-  // Final fallback: Yahoo Finance + CORS-proxied TWSE/TPEx (scoring_patch.js),
-  // for codes nothing else could resolve (e.g. blocked/rate-limited,
-  // or newly-listed active ETFs not yet in a fresh MIS session)
-  const stillMissing=codes.filter(c=>!prices[c]);
-  if(stillMissing.length&&typeof _fetchYahooPrices==='function'){
-    try{
-      const fb=await _fetchYahooPrices(stillMissing);
-      dbg.fallback='ok ('+Object.keys(fb).length+'/'+stillMissing.length+' 筆)';
-      Object.assign(prices,fb);
-    }catch(e){dbg.fallback='失敗: '+e.message;}
+  // ② 還缺的：MIS 代理、Yahoo、證交所/櫃買公開資料三路同時跑，各自回來就先更新畫面
+  const missing=codes.filter(c=>!prices[c]);
+  if(missing.length){
+    const jobs=[
+      fetchMisViaProxy(missing).then(p=>{dbg.misProxy='ok ('+apply(p,3)+'/'+missing.length+' 筆)';}).catch(e=>{dbg.misProxy='失敗';}),
+      typeof _fetchYahooPrices==='function'
+        ?_fetchYahooPrices(missing,{yahooOnly:true}).then(p=>{dbg.fallback='ok ('+apply(p,2)+'/'+missing.length+' 筆)';}).catch(e=>{dbg.fallback='失敗: '+e.message;})
+        :Promise.resolve(),
+      fetchOpenAPIPrices(missing).then(p=>{dbg.openapi='ok ('+apply(p,1)+'/'+missing.length+' 筆)';}).catch(()=>{dbg.openapi='失敗';}),
+    ];
+    await Promise.all(jobs);
   }
   dbg.total=Object.keys(prices).length+'/'+codes.length;
   const unresolved=codes.filter(c=>!prices[c]);
@@ -2026,7 +2036,9 @@ async function renderPortfolio(liveDataMap){
            :`<div class="hr-sig" onclick="event.stopPropagation();openKlineFor('${h.code.replace('.TW','')}')">${renderScoreDot(h.code.replace('.TW',''))}${(typeof dipCache!=='undefined'&&dipCache[_hCode(h)]?.color==='green')?sugg:''}</div>`}
         <div class="hr-prices" onclick="event.stopPropagation();manualPriceCorrect('${h.code.replace('.TW','')}')">
           <div class="hr-mkt ${pxFlashClass(_hCode(h),curr)}" style="${pxFlashStyle(_hCode(h))}">${curr?curr.toFixed(2):'—'}<span style="font-size:9px;color:var(--sub);margin-left:3px">✏️</span></div>
-          ${isStale?`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`:''}
+          ${isStale?(_liveFetchP
+            ?`<div style="font-size:9px;color:var(--sub);white-space:nowrap" title="正在抓最新報價，目前顯示 ${staleDate} 的價格"><span class="spin-ic">⟳</span> 更新中</div>`
+            :`<div style="font-size:9px;color:var(--amber);white-space:nowrap" title="最後成功同步：${staleDate}">⏱ 非今日報價</div>`):''}
           <div class="hr-avg">${h.cost.toFixed(2)}</div>
         </div>
         <div class="hr-shares">

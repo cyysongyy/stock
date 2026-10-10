@@ -740,9 +740,12 @@ setInterval(async () => {
       成功才合併寫入，失敗保留舊快取
    ================================================ */
 
-async function _fetchYahooPrices(codes) {
+// opts.yahooOnly：index.html 已經平行在跑 MIS 代理與公開資料，這裡只負責 Yahoo，不重複下載
+async function _fetchYahooPrices(codes, opts = {}) {
   const prices = {};
   const today = new Date().toLocaleDateString('zh-TW');
+  let knownNames = {};
+  try { knownNames = JSON.parse(localStorage.getItem(_NAME_CACHE_KEY) || '{}'); } catch (e) {}
 
   /* ── 方法1: Yahoo Finance v8 chart API（讀 meta.regularMarketPrice，
      缺值時改讀歷史收盤序列最後一筆 —— 冷門ETF常有 meta 即時欄位是空的，
@@ -769,12 +772,15 @@ async function _fetchYahooPrices(codes) {
         // meta.symbol is just the ticker (e.g. "00712.TW") — never show that as
         // the name, it just duplicates the code. Try the quote endpoint for a
         // real company/ETF name; leave it blank (not the ticker) if that fails too.
-        let name = '';
-        try {
-          const q = await _yFetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${code}${suf}&fields=longName,shortName`);
-          const qr = q?.quoteResponse?.result?.[0];
-          name = qr?.longName || qr?.shortName || '';
-        } catch (e) {}
+        // 已經知道名稱就不再多打一次（經代理很慢），價格可以早點出來
+        let name = knownNames[code] || '';
+        if (!name) {
+          try {
+            const q = await _yFetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${code}${suf}&fields=longName,shortName`);
+            const qr = q?.quoteResponse?.result?.[0];
+            name = qr?.longName || qr?.shortName || '';
+          } catch (e) {}
+        }
         prices[code] = {
           price:   +price.toFixed(2),
           chgPct:  prev ? +((price - prev) / prev * 100).toFixed(2) : null,
@@ -787,6 +793,7 @@ async function _fetchYahooPrices(codes) {
   }
 
   await Promise.all(codes.map(c => _yahooLivePrice(c)));
+  if (opts.yahooOnly) return prices;
 
   /* ── 方法2: TWSE MIS（補齊 Yahoo 沒有的代碼）── */
   const miss = codes.filter(c => !prices[c]);
