@@ -497,6 +497,7 @@ select option{background:var(--card2);color:var(--text)}
     <div class="menu-sep"></div>
     <div class="menu-sep"></div>
     <div class="menu-item" onclick="openSheetModal()">☁️ Google Sheet 同步</div>
+    <div class="menu-item" onclick="openRelayModal()">⚡ 即時報價加速</div>
     <div class="menu-item" onclick="openAIKeyModal()">🤖 AI 分析設定</div>
     <div class="menu-sep"></div>
     <div class="menu-item menu-danger" onclick="resetApp()">🗑️ 清除所有資料</div>
@@ -678,6 +679,35 @@ select option{background:var(--card2);color:var(--text)}
 <div class="toast" id="toast"></div>
 
 <!-- Google Sheet Sync Modal -->
+<div class="modal-overlay" id="modal-relay" onclick="if(event.target===this)closeModal('modal-relay')">
+  <div class="modal">
+    <h3>⚡ 即時報價加速（Apps Script 中繼）</h3>
+    <div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">
+      iPhone 常常連不到證交所即時報價，只能改走很慢的備用來源。由你自己的 Google Apps Script 在 Google 伺服器上代抓，盤中約 1–3 秒就能拿到報價。<br>
+      <b style="color:var(--text)">1.</b> 按下方「複製程式碼」<br>
+      <b style="color:var(--text)">2.</b> 到 script.google.com →「新專案」，把原本的內容全部刪掉、貼上，按儲存<br>
+      <b style="color:var(--text)">3.</b> 右上「部署」→「新增部署作業」→ 類型選「網頁應用程式」，執行身分選「我」、存取權選「所有人」→ 部署（第一次要按「授權存取」）<br>
+      <b style="color:var(--text)">4.</b> 複製「網頁應用程式網址」貼到下面，按「測試」，成功後按「儲存」
+    </div>
+    <button class="btn-cancel" style="width:100%;margin-bottom:6px;padding:10px;border-radius:9px;border:none" onclick="copyRelayCode()">📋 複製程式碼</button>
+    <details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--sub);cursor:pointer">複製不了？點這裡顯示程式碼，手動全選複製</summary>
+      <pre id="relay-code-pre" style="font-size:9px;max-height:180px;overflow:auto;background:var(--card2);padding:8px;border-radius:6px;white-space:pre-wrap;user-select:all;-webkit-user-select:all"></pre>
+    </details>
+    <div class="form-group">
+      <label>中繼網址（網頁應用程式網址）</label>
+      <input id="relay-url-inp" type="url" placeholder="https://script.google.com/macros/s/.../exec" style="font-size:11px">
+    </div>
+    <div id="relay-test-result" style="font-size:11px;margin:6px 0;min-height:18px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-relay')">取消</button>
+      <button class="btn-cancel" onclick="testRelay()" style="color:var(--blue);border-color:var(--blue)44">🔗 測試</button>
+      <button class="btn-save" onclick="saveRelay()">儲存</button>
+    </div>
+    <div style="font-size:10px;color:var(--sub);margin-top:10px;line-height:1.6">
+      💡 這支程式只會向證交所（及 Yahoo 備援）查你指定的股票代號，不會讀寫你的 Google 檔案。留空並儲存即停用。
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="modal-sheet" onclick="if(event.target===this)closeModal('modal-sheet')">
   <div class="modal">
     <h3>☁️ Google Sheet 同步</h3>
@@ -751,6 +781,122 @@ function saveSheetSettings(){
   if(url&&token){showToast('☁️ Sheet 設定已儲存');updateSheetBadge();syncFromSheet();}
   else showToast('Sheet 同步已停用');
   updateSheetBadge();
+}
+// ── 即時報價加速：使用者自己部署的 Apps Script 代抓 MIS（iPhone 直連常失敗）──────
+const KEY_RELAY='tw_quote_relay';
+function relayUrl(){return localStorage.getItem(KEY_RELAY)||'';}
+const RELAY_GS_CODE=String.raw`// 台股 Dashboard 即時報價中繼（Google Apps Script）
+// 部署：部署 → 新增部署作業 → 網頁應用程式，執行身分「我」、存取權「所有人」
+// 只接受股票代號查詢，固定向證交所 MIS 查價，MIS 沒回的改問 Yahoo
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  var syms = String(p.ex || '').split('|').filter(function (s) {
+    return /^(tse|otc)_[0-9A-Z]{4,6}\.tw$/.test(s);
+  }).slice(0, 60);
+  var quotes = {};
+  if (syms.length) {
+    var reqs = [];
+    for (var i = 0; i < syms.length; i += 10) {
+      reqs.push({
+        url: 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=' +
+          encodeURIComponent(syms.slice(i, i + 10).join('|')) + '&json=1&delay=0&_=' + Date.now(),
+        muteHttpExceptions: true
+      });
+    }
+    UrlFetchApp.fetchAll(reqs).forEach(function (r) {
+      try {
+        (JSON.parse(r.getContentText()).msgArray || []).forEach(function (s) {
+          quotes[s.c] = { c: s.c, ex: s.ex, n: s.n, z: s.z, y: s.y, o: s.o, h: s.h, l: s.l,
+                          v: s.v, b: s.b, a: s.a, d: s.d, t: s.t, src: 'mis' };
+        });
+      } catch (err) {}
+    });
+    var missing = [];
+    syms.forEach(function (s) {
+      var c = s.slice(4, -3);
+      if (!quotes[c] && missing.indexOf(c) < 0) missing.push(c);
+    });
+    if (missing.length) {
+      var yreq = [];
+      missing.forEach(function (c) {
+        ['.TW', '.TWO'].forEach(function (suf) {
+          yreq.push({ url: 'https://query1.finance.yahoo.com/v8/finance/chart/' + c + suf + '?interval=1d&range=5d',
+                      muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        });
+      });
+      UrlFetchApp.fetchAll(yreq).forEach(function (r, i) {
+        var c = missing[Math.floor(i / 2)];
+        if (quotes[c]) return;
+        try {
+          var m = JSON.parse(r.getContentText()).chart.result[0].meta;
+          if (m && m.regularMarketPrice) {
+            quotes[c] = { c: c, z: String(m.regularMarketPrice), y: String(m.chartPreviousClose || m.previousClose || ''),
+                          n: '', ex: i % 2 ? 'otc' : 'tse', src: 'yahoo' };
+          }
+        } catch (err) {}
+      });
+    }
+  }
+  var body = JSON.stringify({ ok: true, at: Date.now(), quotes: quotes });
+  var cb = p.callback;
+  if (cb && /^[A-Za-z_$][\w$]*$/.test(cb)) {
+    return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}
+`;
+async function fetchViaRelay(codes,url){
+  url=url||relayUrl();
+  const out={mis:{},yahoo:{}};
+  if(!url||!codes.length)return out;
+  const ex=codes.flatMap(c=>{const m=_misMkt[c];return m?[m+'_'+c+'.tw']:['tse_'+c+'.tw','otc_'+c+'.tw'];}).join('|');
+  const j=await _jsonpFetch(url+(url.includes('?')?'&':'?')+'ex='+encodeURIComponent(ex));
+  for(const q of Object.values(j?.quotes||{})){
+    const v=_parseMisQuote(q);if(!v||!codes.includes(q.c))continue;
+    if(!v.name)delete v.name;
+    (q.src==='yahoo'?out.yahoo:out.mis)[q.c]=v;
+    if(q.ex==='tse'||q.ex==='otc')_rememberMkt({[q.c]:1},q.ex);
+  }
+  return out;
+}
+function openRelayModal(){
+  document.getElementById('user-menu').classList.remove('open');
+  document.getElementById('relay-url-inp').value=relayUrl();
+  document.getElementById('relay-code-pre').textContent=RELAY_GS_CODE;
+  document.getElementById('relay-test-result').textContent='';
+  document.getElementById('modal-relay').classList.add('open');
+}
+async function copyRelayCode(){
+  try{await navigator.clipboard.writeText(RELAY_GS_CODE);showToast('📋 程式碼已複製');return;}catch(e){}
+  try{
+    const ta=document.createElement('textarea');ta.value=RELAY_GS_CODE;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();const ok=document.execCommand('copy');ta.remove();
+    if(ok){showToast('📋 程式碼已複製');return;}
+  }catch(e){}
+  showToast('無法自動複製，請展開下方程式碼手動複製');
+}
+async function testRelay(){
+  const url=document.getElementById('relay-url-inp').value.trim();
+  const out=document.getElementById('relay-test-result');
+  if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)){out.innerHTML='<span style="color:var(--red)">請貼上 https://script.google.com/macros/s/…/exec 開頭的網址</span>';return;}
+  const codes=holdings.length?[...new Set(holdings.map(h=>_hCode(h)))].slice(0,6):['0050','2330'];
+  out.innerHTML='<span style="color:var(--sub)">測試中…</span>';
+  const t0=Date.now();
+  try{
+    const r=await fetchViaRelay(codes,url);
+    const got={...r.yahoo,...r.mis},n=Object.keys(got).length,sec=((Date.now()-t0)/1000).toFixed(1);
+    out.innerHTML=n
+      ?`<span style="color:#00c853">✓ 成功，${sec} 秒抓到 ${n}/${codes.length} 檔</span><br><span style="color:var(--sub)">${Object.entries(got).map(([c,v])=>c+' '+v.price).join('、')}</span>`
+      :`<span style="color:var(--amber)">連上了但沒有抓到報價（${sec} 秒），請確認部署的存取權是「所有人」</span>`;
+  }catch(e){out.innerHTML=`<span style="color:var(--red)">連不上：${_escH(e.message)}。請確認網址正確、部署存取權選「所有人」</span>`;}
+}
+function saveRelay(){
+  const url=document.getElementById('relay-url-inp').value.trim();
+  if(url&&!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)){showToast('網址格式不對');return;}
+  if(url)localStorage.setItem(KEY_RELAY,url);else localStorage.removeItem(KEY_RELAY);
+  closeModal('modal-relay');
+  showToast(url?'⚡ 即時報價加速已啟用':'即時報價加速已停用');
+  if(url&&holdings.length)fetchLiveAndRender();
 }
 // ── AI Analysis ───────────────────────────────────────────────
 function detectAIProvider(key){
@@ -959,7 +1105,9 @@ ${sigs.map(s=>`・${s.name}：${s.desc}（${s.type==='bull'?'🟢多':s.type==='
 // JSONP helper — works on iOS Safari where fetch/CORS to Apps Script often fails
 function _jsonpFetch(url){
   return new Promise((resolve,reject)=>{
-    const cb='_gs'+Date.now();
+    // 同一毫秒可能有兩個請求（例如快速更新與完整更新同時發），callback 名稱要唯一
+    _jsonpFetch.n=(_jsonpFetch.n||0)+1;
+    const cb='_gs'+Date.now()+'_'+_jsonpFetch.n;
     const s=document.createElement('script');
     const timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},10000);
     function cleanup(){delete window[cb];s.remove();clearTimeout(timer);}
@@ -1256,15 +1404,22 @@ function _rememberMkt(prices,mkt){
   let ch=false;for(const c of Object.keys(prices))if(_misMkt[c]!==mkt){_misMkt[c]=mkt;ch=true;}
   if(ch)try{localStorage.setItem('tw_mis_mkt',JSON.stringify(_misMkt));}catch(e){}
 }
-let _lastPxAt=0,_fastBusy=false;
+let _lastPxAt=0,_fastBusy=false,_misAlive=true;
 async function fastPriceTick(){
   if(_fastBusy)return;_fastBusy=true;
   try{
     const codes=[...new Set([...holdings.map(h=>_hCode(h)),...watchlist.map(w=>w.code)])];
     const tse=codes.filter(c=>_misMkt[c]!=='otc'),otc=codes.filter(c=>_misMkt[c]==='otc');
-    const [a,b]=await Promise.all([tse.length?fetchMisChunked('tse',tse):{prices:{}},otc.length?fetchMisChunked('otc',otc):{prices:{}}]);
+    // 直連 MIS 最近連不上時，同時透過 Apps Script 中繼抓（有設定才會）
+    const useRelay=!!relayUrl()&&!_misAlive;
+    const [a,b,rl]=await Promise.all([
+      tse.length?fetchMisChunked('tse',tse):{prices:{},count:0},
+      otc.length?fetchMisChunked('otc',otc):{prices:{},count:0},
+      useRelay?fetchViaRelay(codes).catch(()=>({mis:{},yahoo:{}})):{mis:{},yahoo:{}},
+    ]);
+    _misAlive=(a.count||0)+(b.count||0)>0;
     _rememberMkt(a.prices,'tse');_rememberMkt(b.prices,'otc');
-    const got={...a.prices,...b.prices};
+    const got={...rl.yahoo,...rl.mis,...a.prices,...b.prices};
     if(Object.keys(got).length){
       Object.assign(priceCache,got);
       localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
@@ -1301,10 +1456,10 @@ async function _fetchLiveAndRender(manual){
   }
   if(resolvedCount===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}`,8000);
+    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 中繼:${d.relay||'未設定'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}${relayUrl()?'':'。可在右上選單設定「⚡ 即時報價加速」'}`,9000);
   }else if(manual&&resolvedCount<codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} MIS代理:${d.misProxy||'—'} Yahoo:${d.fallback||'—'} 公開API:${d.openapi||'—'}）`,10000);
+    showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} 中繼:${d.relay||'未設定'} MIS代理:${d.misProxy||'—'} Yahoo:${d.fallback||'—'} 公開API:${d.openapi||'—'}）`,10000);
   }
   // Merge into priceCache
   if(resolvedCount)_lastPxAt=Date.now();
@@ -1754,6 +1909,8 @@ async function fetchTWSEPrices(codes,onPartial){
     if(onPartial&&Object.keys(upd).length&&codes.some(c=>!prices[c]||rank[c]<4)){try{onPartial(upd);}catch(e){}}
     return Object.keys(upd).length;
   };
+  // ⓪ 有設定 Apps Script 中繼就同時問（iPhone 上最穩的即時來源）
+  const relayP=relayUrl()?fetchViaRelay(codes).then(r=>{dbg.relay='ok ('+(apply(r.mis,4)+apply(r.yahoo,3))+'/'+codes.length+' 筆)';}).catch(e=>{dbg.relay='失敗: '+e.message;}):null;
   // ① MIS 直連：已知上市/上櫃的直接問對市場，不知道的兩邊同時問（不再先上市、失敗才上櫃）
   const tseCodes=codes.filter(c=>_misMkt[c]!=='otc'),otcCodes=codes.filter(c=>_misMkt[c]!=='tse');
   const [tse,otc]=await Promise.all([tseCodes.length?fetchMisChunked('tse',tseCodes):{prices:{},count:0,errs:[]},otcCodes.length?fetchMisChunked('otc',otcCodes):{prices:{},count:0,errs:[]}]);
@@ -1764,6 +1921,8 @@ async function fetchTWSEPrices(codes,onPartial){
   // 批次查詢偶爾漏回某幾檔：MIS 有回應時，漏掉的逐檔再問一次（平行、很快）；
   // MIS 根本沒回應就不要再浪費時間重試
   const misAlive=tse.count+otc.count>0;
+  _misAlive=misAlive;
+  if(relayP)await relayP;
   const retry=codes.filter(c=>!prices[c]);
   if(misAlive&&retry.length&&retry.length<=12){
     const [rt,ro]=await Promise.all([fetchMisChunked('tse',retry.filter(c=>_misMkt[c]!=='otc'),1),fetchMisChunked('otc',retry.filter(c=>_misMkt[c]!=='tse'),1)]);
@@ -1783,6 +1942,7 @@ async function fetchTWSEPrices(codes,onPartial){
     ];
     await Promise.all(jobs);
   }
+  if(relayP)await relayP;
   dbg.total=Object.keys(prices).length+'/'+codes.length;
   const unresolved=codes.filter(c=>!prices[c]);
   dbg.missing=unresolved.length?unresolved.join(','):null;
