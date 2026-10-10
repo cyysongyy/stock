@@ -684,10 +684,13 @@ select option{background:var(--card2);color:var(--text)}
     <h3>⚡ 即時報價加速（Apps Script 中繼）</h3>
     <div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:10px">
       iPhone 常常連不到證交所即時報價，只能改走很慢的備用來源。由你自己的 Google Apps Script 在 Google 伺服器上代抓，盤中約 1–3 秒就能拿到報價。<br>
+      📱 iPhone 上 Google 的編輯畫面很難操作，建議用電腦做步驟 2–4；只能用手機的話，在 Safari 網址列按「大小」→「要求桌面版網站」。<br>
       <b style="color:var(--text)">1.</b> 按下方「複製程式碼」<br>
-      <b style="color:var(--text)">2.</b> 到 script.google.com →「新專案」，把原本的內容全部刪掉、貼上，按儲存<br>
-      <b style="color:var(--text)">3.</b> 右上「部署」→「新增部署作業」→ 類型選「網頁應用程式」，執行身分選「我」、存取權選「所有人」→ 部署（第一次要按「授權存取」）<br>
-      <b style="color:var(--text)">4.</b> 複製「網頁應用程式網址」貼到下面，按「測試」，成功後按「儲存」
+      <b style="color:var(--text)">2.</b> 開 script.google.com →「新專案」，把原本的內容全部刪掉、貼上，按儲存（💾）<br>
+      <b style="color:var(--text)">3.</b> 右上角藍色「部署」→「新增部署作業」→ 左邊齒輪選「網頁應用程式」→ 執行身分選「我」、存取權選「所有人」→ 按「部署」。第一次會跳出授權：選你的帳號 →「進階」→「前往（不安全）」→「允許」<br>
+      <b style="color:var(--text)">4.</b> 部署完成的視窗裡有一欄「網頁應用程式」，下面是一串 https://script.google.com/macros/s/…/exec 的網址，旁邊有「複製」按鈕，按它<br>
+      <b style="color:var(--text)">5.</b> 回到這裡，在下面的「中繼網址」欄位長按 →「貼上」→ 按「🔗 測試」。出現綠色「✓ 成功」就按「儲存」<br>
+      <span style="color:var(--sub)">（部署視窗關掉了也沒關係：「部署」→「管理部署作業」就能再看到網址）</span>
     </div>
     <button class="btn-cancel" style="width:100%;margin-bottom:6px;padding:10px;border-radius:9px;border:none" onclick="copyRelayCode()">📋 複製程式碼</button>
     <details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--sub);cursor:pointer">複製不了？點這裡顯示程式碼，手動全選複製</summary>
@@ -1456,7 +1459,7 @@ async function _fetchLiveAndRender(manual){
   }
   if(resolvedCount===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 中繼:${d.relay||'未設定'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}${relayUrl()?'':'。可在右上選單設定「⚡ 即時報價加速」'}`,9000);
+    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 中繼:${d.relay||'未設定'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}${relayUrl()?'':'。可點左上角頭像 →「⚡ 即時報價加速」設定'}`,9000);
   }else if(manual&&resolvedCount<codes.length){
     const d=window._lastPriceFetchDebug||{};
     showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} 中繼:${d.relay||'未設定'} MIS代理:${d.misProxy||'—'} Yahoo:${d.fallback||'—'} 公開API:${d.openapi||'—'}）`,10000);
@@ -2168,7 +2171,7 @@ async function renderPortfolio(liveDataMap){
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">${liveStatusHTML()}幣別：新台幣</div>
           ${staleCount?(_liveFetchP
             ?`<div style="text-align:right;font-size:10px;color:var(--sub);margin-top:4px"><span class="spin-ic">⟳</span> ${staleCount} 檔報價更新中…</div>`
-            :`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${rowData.filter(r=>r.isStale).map(r=>_hCode(r.h)).join('、')} 抓不到今日報價，市值估計可能不準，點此重抓${relayUrl()?'':'（可在選單設定「⚡ 即時報價加速」）'}</div>`):''}
+            :`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${rowData.filter(r=>r.isStale).map(r=>_hCode(r.h)).join('、')} 抓不到今日報價，市值估計可能不準，點此重抓${relayUrl()?'':'（可點左上角頭像 →「⚡ 即時報價加速」設定）'}</div>`):''}
         </div>
       </div>
       <div class="ov-actions">
