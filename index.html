@@ -1670,17 +1670,18 @@ const USP_PROXIES=[
   u=>'https://corsproxy.io/?'+encodeURIComponent(u),
   u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
 ];
-async function fetchUSJson(url){
-  for(const mk of USP_PROXIES){
-    try{
-      const r=await fetchT(mk(url),10000);
-      if(!r.ok)continue;
-      const t=await r.text();
-      const j=JSON.parse(t);
-      if(j&&j.chart&&j.chart.result&&j.chart.result[0])return j; // 驗證內容有效才採用
-    }catch(e){}
-  }
-  throw new Error('US fetch failed');
+// 幾個代理同時問，第一個回有效資料的就用（以前一個一個試，每個失敗都要等 10 秒）
+function fetchUSJson(url){
+  return new Promise((resolve,reject)=>{
+    let left=USP_PROXIES.length;
+    USP_PROXIES.forEach(mk=>{
+      fetchT(mk(url),10000).then(r=>r.ok?r.text():'').then(t=>{
+        const j=JSON.parse(t);
+        if(j&&j.chart&&j.chart.result&&j.chart.result[0])resolve(j); // 驗證內容有效才採用
+        else throw new Error('empty');
+      }).catch(()=>{if(--left===0)reject(new Error('US fetch failed'));});
+    });
+  });
 }
 async function fetchUSIndex(sym){
   const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=10d&includePrePost=false';
@@ -1769,22 +1770,35 @@ async function loadUSPredict(force){
   if(!wrap)return;
   let cache=null;
   try{cache=JSON.parse(localStorage.getItem(USP_KEY)||'null');}catch(e){}
-  if(cache&&!force&&Date.now()-cache.at<30*60*1000){renderUSPredict(cache.data);return;}
+  // 資料不完整的快取只保留 2 分鐘，盡快補齊；完整的保留 30 分鐘
+  const ttl=cache?.data?.missing?.length?2*60*1000:30*60*1000;
+  if(cache&&!force&&Date.now()-cache.at<ttl){renderUSPredict(cache.data);return;}
   if(cache)renderUSPredict(cache.data,true); // 先顯示舊資料(標示更新中)再背景更新
   else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
   try{
-    const results=await Promise.all(USP_INDICES.map(async ix=>{
-      try{return Object.assign({},ix,await fetchUSIndex(ix.sym));}
-      catch(e){return Object.assign({},ix,{chg:null});}
-    }));
+    // 依序抓：四個指數同時打免費代理很容易被限流，結果常常只抓到一個
+    const results=[];
+    for(const ix of USP_INDICES){
+      try{results.push(Object.assign({},ix,await fetchUSIndex(ix.sym)));}
+      catch(e){results.push(Object.assign({},ix,{chg:null}));}
+    }
+    const fresh=results.filter(r=>r.chg!=null);
+    if(!fresh.length)throw new Error('無法取得美股資料');
+    const dateStr=fresh[0].dateStr;
+    // 這次沒抓到的，沿用同一個美股交易日之前已經抓到的數值
+    const prev=cache?.data;
+    if(prev&&prev.dateStr===dateStr){
+      results.forEach(r=>{if(r.chg==null){const p=(prev.indices||[]).find(x=>x.nm===r.nm);if(p&&p.chg!=null)r.chg=p.chg;}});
+    }
     const valid=results.filter(r=>r.chg!=null);
-    if(!valid.length)throw new Error('無法取得美股資料');
     const wSum=valid.reduce((s,r)=>s+r.w,0);
     const score=valid.reduce((s,r)=>s+r.chg*r.w,0)/wSum;
-    const data={score,dateStr:valid[0].dateStr,indices:results.map(r=>({nm:r.nm,chg:r.chg}))};
+    const missing=results.filter(r=>r.chg==null).map(r=>r.nm);
+    const data={score,dateStr,indices:results.map(r=>({nm:r.nm,chg:r.chg})),missing,coverage:wSum};
     localStorage.setItem(USP_KEY,JSON.stringify({at:Date.now(),data}));
-    _uspRetry=0;
     renderUSPredict(data);
+    if(missing.length&&_uspRetry<3){_uspRetry++;setTimeout(()=>loadUSPredict(true),30000);}
+    else if(!missing.length)_uspRetry=0;
   }catch(e){
     if(cache)renderUSPredict(cache.data,false,true); // 更新失敗→顯示快取並標示
     if(_uspRetry<3){_uspRetry++;setTimeout(()=>loadUSPredict(true),30000);} // 30秒後自動重試
@@ -1809,6 +1823,8 @@ function renderUSPredict(d,updating,stale){
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
     +'<div class="usp-verdict"><div class="txt '+v.cls+'">'+v.emo+' '+v.txt+'</div><div class="sub">加權指標 '+(d.score>0?'+':'')+d.score.toFixed(2)+'</div></div>'
     +'<div style="font-size:11px;color:var(--sub);margin-top:4px">'+v.desc+'</div>'
+    +(d.missing&&d.missing.length?'<div style="font-size:11px;color:var(--amber);margin-top:6px">⚠️ '+d.missing.join('、')+' 暫時抓不到，目前只依 '
+      +d.indices.filter(ix=>ix.chg!=null).map(ix=>ix.nm).join('、')+' 估算（占權重 '+Math.round((d.coverage||0)*100)+'%），參考性較低，會自動重試</div>':'')
     +(uspSectorHint(d.indices)?'<div style="font-size:11px;color:var(--text);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">'+uspSectorHint(d.indices)+'</div>':'')
     +'<div id="usp-holdings-wrap"></div>'
     +'<div class="usp-note">依前一交易日美股四大指數加權估算今日台股開盤傾向（費半 40%・那指 25%・S&P 20%・道瓊 15%），僅供參考，非投資建議。</div>'
@@ -2150,7 +2166,9 @@ async function renderPortfolio(liveDataMap){
             <span class="ov-val ${rp>=0?'up':'down'}">${mask((rp>=0?'+':'')+Math.round(rp).toLocaleString())}</span>
           </div>`;})():''}
           <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">${liveStatusHTML()}幣別：新台幣</div>
-          ${staleCount?`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${staleCount} 檔非今日報價，市值估計可能不準，點此刷新</div>`:''}
+          ${staleCount?(_liveFetchP
+            ?`<div style="text-align:right;font-size:10px;color:var(--sub);margin-top:4px"><span class="spin-ic">⟳</span> ${staleCount} 檔報價更新中…</div>`
+            :`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${rowData.filter(r=>r.isStale).map(r=>_hCode(r.h)).join('、')} 抓不到今日報價，市值估計可能不準，點此重抓${relayUrl()?'':'（可在選單設定「⚡ 即時報價加速」）'}</div>`):''}
         </div>
       </div>
       <div class="ov-actions">
