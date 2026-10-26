@@ -1,0 +1,12 @@
+{
+  "name": "tw-stock-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "台股投資 Dashboard（靜態前端）與台股當日預測命令列工具",
+  "scripts": {
+    "predict": "node cli/predict.mjs --save"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
