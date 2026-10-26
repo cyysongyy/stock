@@ -24,7 +24,7 @@
 - KD 黃金交叉 / 死亡交叉 / 超買超賣提示
 - 個股 K 線圖、RSI、MACD、成交量圖表
 - 美股收盤 → 台股開盤預測（四大指數加權）
-- 🤖 AI 深度分析：支援 Claude / ChatGPT / Gemini API Key
+- 🤖 AI 深度分析：支援 Claude / ChatGPT / Gemini / NVIDIA API Key（NVIDIA 金鑰以 `nvapi-` 開頭）
 
 ### 提醒
 - 價格 / 損益目標警報（瀏覽器推播通知）
@@ -54,6 +54,23 @@
 | 強烈賣出 | 4–5 項指標看空 | 🔴 紅 |
 
 注意：台灣股市慣例 ▲漲為紅色、▼跌為綠色。
+
+---
+
+## 每日台股預測（命令列）
+
+蒐集美股、亞股、台股收盤與相關新聞，輸出當日開盤傾向預測。需要 Node.js 18 以上，無額外套件。
+
+```bash
+node cli/predict.mjs          # 印出報告
+node cli/predict.mjs --save   # 另存 reports/predict-日期.md 與 .json
+npm run predict              # 等同 --save
+```
+
+- 規則式預測：美股加權（費半 40%／那指 25%／S&P 20%／道瓊 15%）占 60%，亞股平均占 30%；區間寬度取加權指數近 10 日報酬標準差（至少 ±0.5%）。權重為經驗值，未經回測校準。
+- AI 分析（選用）：設定環境變數 `NVIDIA_API_KEY` 即會另外產生文字分析，`NVIDIA_MODEL` 可更換模型（預設 `meta/llama-3.3-70b-instruct`）。
+- 資料來源：Yahoo Finance、Google News RSS。執行環境需能連到 `query1.finance.yahoo.com`、`news.google.com`、`integrate.api.nvidia.com`。
+- 退出碼：0 成功；2 無法取得美股資料，不產生預測。
 
 ---
 
