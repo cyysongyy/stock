@@ -9,8 +9,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>台股投資 Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- 不擋住畫面：持股與市值先顯示，Chart.js 下載完再補畫圓餅圖；OCR 引擎只在匯入截圖時才載入 -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" onload="window._onChartLoad&&window._onChartLoad()"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -2095,6 +2095,8 @@ function liveStatusHTML(){
     :`更新於 ${t}・`;
 }
 let _donutDrawn=false;
+// Chart.js 改成不擋畫面載入：載入完成時如果首頁已經畫好了，就重畫一次把圓餅圖補上
+window._onChartLoad=()=>{if(document.getElementById('app')?.style.display==='block'&&holdings.length)renderPortfolio();};
 async function renderPortfolio(liveDataMap){
   const ovWrap=document.getElementById('overview-wrap');
   const hlWrap=document.getElementById('holdings-wrap');
@@ -3159,11 +3161,24 @@ function handleOCRFile(f){
   document.getElementById('ocr-bar-wrap').style.display='block';
   runOCRScan(f);
 }
+// OCR 引擎（Tesseract.js）很大又只有匯入截圖會用到，不在開 App 時載入，第一次用到才下載
+function loadTesseract(){
+  if(window.Tesseract)return Promise.resolve();
+  if(!loadTesseract.p)loadTesseract.p=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=res;
+    s.onerror=()=>{loadTesseract.p=null;s.remove();rej(new Error('OCR 引擎下載失敗，請檢查網路後再試'));};
+    document.head.appendChild(s);
+  });
+  return loadTesseract.p;
+}
 async function runOCRScan(file){
   const bar=document.getElementById('ocr-bar');
   const msg=document.getElementById('ocr-status-msg');
   msg.textContent='載入 OCR 引擎…';
   try{
+    await loadTesseract();
     const worker=await Tesseract.createWorker('chi_tra+eng',1,{
       logger:p=>{
         if(p.status==='recognizing text'){
