@@ -1459,7 +1459,7 @@ async function _fetchLiveAndRender(manual){
   }
   if(resolvedCount===0&&codes.length){
     const d=window._lastPriceFetchDebug||{};
-    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 中繼:${d.relay||'未設定'} 公開API:${d.openapi||'—'} 備援:${d.fallback||'—'}${relayUrl()?'':'。可點左上角頭像 →「⚡ 即時報價加速」設定'}`,9000);
+    showToast(`⚠️ 報價全部失敗 TSE:${d.tse||'—'} OTC:${d.otc||'—'} 中繼:${d.relay||'未設定'} MIS代理:${d.misProxy||'—'} 公開API:${d.openapi||'—'} Yahoo:${d.fallback||'—'}${relayUrl()?'':'。可點左上角頭像 →「⚡ 即時報價加速」設定'}`,9000);
   }else if(manual&&resolvedCount<codes.length){
     const d=window._lastPriceFetchDebug||{};
     showToast(`⚠️ 部分股票無法取得報價：${d.missing||''}（TSE:${d.tse||'—'} OTC:${d.otc||'—'} 逐檔:${d.retry||'—'} 中繼:${d.relay||'未設定'} MIS代理:${d.misProxy||'—'} Yahoo:${d.fallback||'—'} 公開API:${d.openapi||'—'}）`,10000);
@@ -1841,9 +1841,12 @@ async function fetchOpenAPIPrices(codes){
   const prices={};
   const want=new Set(codes);
   // 上市、上櫃兩份資料同時抓（以前要等上市那份下載完才開始抓上櫃）
-  const otcP=fetchT('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',20000).then(r=>r.ok?r.json():[]).catch(()=>[]);
+  // 記下失敗原因給診斷提示用（以前失敗也顯示成「ok (0/7 筆)」，看不出是連不上）
+  const errs=[];
+  const otcP=fetchT('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes',20000).then(r=>{if(!r.ok){errs.push('櫃買 HTTP '+r.status);return[];}return r.json();}).catch(e=>{errs.push('櫃買 '+e.message);return[];});
   try{
     const r=await fetchT('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',20000);
+    if(!r.ok)errs.push('證交所 HTTP '+r.status);
     if(r.ok){
       const arr=await r.json();
       (arr||[]).forEach(s=>{
@@ -1853,8 +1856,9 @@ async function fetchOpenAPIPrices(codes){
         if(p)prices[s.Code]={price:p,chgPct:(o&&o>0)?((p-o)/o*100):null,name:s.Name||s.Code,date:new Date().toLocaleDateString('zh-TW')};
       });
     }
-  }catch(e){}
+  }catch(e){errs.push('證交所 '+e.message);}
   const arr=await otcP;
+  fetchOpenAPIPrices.lastErr=errs.join('、');
   (arr||[]).forEach(s=>{
     const code=s.SecuritiesCompanyCode;
     if(!want.has(code)||prices[code])return;
@@ -1917,6 +1921,8 @@ async function fetchMisViaProxy(codes){
   }));
   return prices;
 }
+// 診斷提示用：抓到 0 筆就是失敗，不要顯示成「ok (0/7 筆)」
+function _srcStatus(n,total,why){return n?`ok (${n}/${total} 筆)`:`失敗${why?'（'+why+'）':''}`;}
 async function fetchTWSEPrices(codes,onPartial){
   const prices={},rank={};
   const dbg=window._lastPriceFetchDebug={at:new Date().toLocaleTimeString('zh-TW',{hour12:false})};
@@ -1953,11 +1959,11 @@ async function fetchTWSEPrices(codes,onPartial){
   const missing=codes.filter(c=>!prices[c]);
   if(missing.length){
     const jobs=[
-      fetchMisViaProxy(missing).then(p=>{dbg.misProxy='ok ('+apply(p,3)+'/'+missing.length+' 筆)';}).catch(e=>{dbg.misProxy='失敗';}),
+      fetchMisViaProxy(missing).then(p=>{dbg.misProxy=_srcStatus(apply(p,3),missing.length,'代理沒有回應');}).catch(e=>{dbg.misProxy='失敗';}),
       typeof _fetchYahooPrices==='function'
-        ?_fetchYahooPrices(missing,{yahooOnly:true}).then(p=>{dbg.fallback='ok ('+apply(p,2)+'/'+missing.length+' 筆)';}).catch(e=>{dbg.fallback='失敗: '+e.message;})
+        ?_fetchYahooPrices(missing,{yahooOnly:true}).then(p=>{dbg.fallback=_srcStatus(apply(p,2),missing.length,'代理沒有回應');}).catch(e=>{dbg.fallback='失敗: '+e.message;})
         :Promise.resolve(),
-      fetchOpenAPIPrices(missing).then(p=>{dbg.openapi='ok ('+apply(p,1)+'/'+missing.length+' 筆)';}).catch(()=>{dbg.openapi='失敗';}),
+      fetchOpenAPIPrices(missing).then(p=>{dbg.openapi=_srcStatus(apply(p,1),missing.length,fetchOpenAPIPrices.lastErr);}).catch(()=>{dbg.openapi='失敗';}),
     ];
     await Promise.all(jobs);
   }
