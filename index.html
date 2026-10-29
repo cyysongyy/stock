@@ -38,6 +38,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .user-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff}
 .user-name{font-size:13px;font-weight:600;max-width:65px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app-title{flex:1;text-align:center;font-size:14px;font-weight:700;color:var(--blue)}
+.voice-pill{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;border:1px solid var(--border);background:var(--card2);flex-shrink:0}
+.voice-pill.on{border-color:#4d9eff;background:#4d9eff22;box-shadow:0 0 8px #4d9eff55}
+.voice-pill.speaking{animation:liveBlink 1s ease-in-out infinite}
+.voice-sum{color:#4d9eff;cursor:pointer;font-weight:700;margin-right:6px}
 .monitor-pill{display:flex;align-items:center;gap:5px;border-radius:20px;padding:5px 11px;cursor:pointer;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card2)}
 .monitor-pill.on{background:var(--green-dim);border-color:var(--green)44;color:var(--green)}
 .monitor-pill.off{color:var(--sub)}
@@ -516,6 +520,7 @@ select option{background:var(--card2);color:var(--text)}
       <div class="user-name" id="top-username">-</div>
     </div>
     <div class="app-title">台股 Dashboard</div>
+    <div class="voice-pill" id="voice-pill" onclick="toggleVoice()" title="語音播報">🔇</div>
     <div class="monitor-pill off" id="monitor-pill" onclick="toggleMonitorPanel()">
       <span class="pulse off" id="pulse-dot"></span>
       <span id="pill-label">監控</span>
@@ -907,6 +912,94 @@ function saveRelay(){
   closeModal('modal-relay');
   showToast(url?'⚡ 即時報價加速已啟用':'即時報價加速已停用');
   if(url&&holdings.length)fetchLiveAndRender();
+}
+// ── 語音播報（瀏覽器內建 speechSynthesis，iPhone Safari 可用）──────────────
+// iPhone 規定網頁要先被使用者點過才能出聲：第一次點畫面時先念一段空白「解鎖」，之後盤中自動播報才念得出來
+const KEY_VOICE='tw_voice_on';
+function voiceOn(){return localStorage.getItem(KEY_VOICE)==='1';}
+let _voiceUnlocked=false;
+function _unlockVoice(){
+  if(_voiceUnlocked||!('speechSynthesis' in window))return;
+  try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);_voiceUnlocked=true;}catch(e){}
+}
+document.addEventListener('pointerdown',_unlockVoice,{once:true,capture:true});
+function _zhVoice(){
+  const vs=('speechSynthesis' in window)?speechSynthesis.getVoices():[];
+  return vs.find(v=>/zh[-_]TW/i.test(v.lang))||vs.find(v=>/zh[-_](HK|Hant)/i.test(v.lang))||vs.find(v=>/^zh/i.test(v.lang))||null;
+}
+function speak(text){
+  if(!('speechSynthesis' in window)||!text)return false;
+  try{
+    speechSynthesis.cancel();
+    // 「$」會被念成「美元」，「・」念不出停頓
+    text=text.replace(/\$/g,'').replace(/・/g,'，').replace(/\//g,'、');
+    const u=new SpeechSynthesisUtterance(text);
+    const v=_zhVoice();if(v)u.voice=v;
+    u.lang=v?v.lang:'zh-TW';u.rate=1;u.pitch=1;
+    const pill=document.getElementById('voice-pill');
+    u.onstart=()=>pill&&pill.classList.add('speaking');
+    u.onend=u.onerror=()=>pill&&pill.classList.remove('speaking');
+    speechSynthesis.speak(u);
+    return true;
+  }catch(e){return false;}
+}
+function updateVoicePill(){
+  const p=document.getElementById('voice-pill');if(!p)return;
+  p.textContent=voiceOn()?'🔊':'🔇';p.classList.toggle('on',voiceOn());
+  p.title=voiceOn()?'語音播報：開（點一下關閉）':'語音播報：關（點一下開啟）';
+}
+function toggleVoice(){
+  if(!('speechSynthesis' in window)){showToast('這個瀏覽器不支援語音播報');return;}
+  const on=!voiceOn();
+  localStorage.setItem(KEY_VOICE,on?'1':'0');updateVoicePill();
+  if(on){showToast('🔊 語音播報已開啟：盤中出現立即買賣訊號會直接念出來');speak('語音播報已開啟。'+summaryText());}
+  else{speechSynthesis.cancel();showToast('🔇 語音播報已關閉');}
+}
+// 念股票：有中文名稱就念名稱，沒有就把代號一個字一個字念（避免「00712」被念成七百一十二）
+function _spokenName(h){const code=_hCode(h),n=_klName(h,code);return n&&n!==code?n:code.split('').join(' ');}
+function _spokenNum(v){
+  const a=Math.abs(v);
+  if(a>=1e8)return(v/1e8).toFixed(2).replace(/\.?0+$/,'')+'億';
+  if(a>=1e4)return(v/1e4).toFixed(1).replace(/\.0$/,'')+'萬';
+  return String(Math.round(v));
+}
+function _urgSpeech(h,u,curr){
+  let t=`${_spokenName(h)}，${u.label}，${u.reason}`;
+  if(curr)t+=`，現價 ${fmtTick(curr)}`;
+  if(u.side==='buy'){
+    const sp=suggestBuyPrice(h,curr);
+    if(sp&&!sp.pending){
+      t+=`，建議價 ${fmtTick(sp.price)}，依據${sp.basis.replace(/\//g,'、')}`;
+      const ts=touchStats(_hCode(h),curr,sp.price);
+      if(ts)t+=ts.p10<0.05?'，十個交易日內到價機率不到百分之五':`，十個交易日內到價機率百分之${Math.round(ts.p10*100)}`;
+    }
+  }
+  return t;
+}
+function summaryText(){
+  if(!holdings.length)return'目前沒有持股。';
+  let val=0,cost=0,dayPL=0,dayKnown=false;
+  const urg=[];
+  holdings.forEach(h=>{
+    const code=_hCode(h),pc=_pcFor(code),curr=pc?.price;
+    cost+=h.cost*h.qty;
+    if(curr){val+=curr*h.qty;
+      const prev=pc.prev||(pc.chgPct!=null?curr/(1+pc.chgPct/100):null);
+      if(prev){dayPL+=(curr-prev)*h.qty;dayKnown=true;}
+      const u=calcUrgency(h,curr);if(u)urg.push({h,u,curr});
+    }
+  });
+  const pl=val-cost,plPct=cost?pl/cost*100:0;
+  let t=`股票市值${_spokenNum(val)}元。`;
+  if(dayKnown)t+=`今天${dayPL>=0?'上漲':'下跌'}${_spokenNum(Math.abs(dayPL))}元，`;
+  t+=`總報酬${pl>=0?'賺':'賠'}${_spokenNum(Math.abs(pl))}元，${pl>=0?'正':'負'}百分之${Math.abs(plPct).toFixed(1)}。`;
+  urg.sort(_urgSort);
+  if(urg.length)t+=`需要注意${urg.length}檔。`+urg.slice(0,4).map(x=>_urgSpeech(x.h,x.u,x.curr)).join('。')+'。';
+  else t+='目前沒有需要立即買進或賣出的持股。';
+  return t;
+}
+function speakSummary(){
+  if(!speak(summaryText()))showToast('這個瀏覽器不支援語音播報');
 }
 // ── AI Analysis ───────────────────────────────────────────────
 function detectAIProvider(key){
@@ -1389,6 +1482,7 @@ function showApp(name){
   loadUSPredict(); // 美股前日收盤 → 台股預測
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
   startLiveLoop();
+  updateVoicePill();
 }
 // 盤中即時更新：每 10 秒只問 TWSE MIS（最快、最即時），每 60 秒跑一次含所有備援的完整更新。
 // 切換使用者會再呼叫 showApp，迴圈只能啟動一次，否則請求量會倍增被 MIS 擋
@@ -2186,7 +2280,7 @@ async function renderPortfolio(liveDataMap){
             <span class="ov-label"><span class="ov-dot" style="background:var(--purple);border-radius:2px"></span>已實現</span>
             <span class="ov-val ${rp>=0?'up':'down'}">${mask((rp>=0?'+':'')+Math.round(rp).toLocaleString())}</span>
           </div>`;})():''}
-          <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px">${liveStatusHTML()}幣別：新台幣</div>
+          <div style="text-align:right;font-size:9px;color:var(--sub);margin-top:4px"><span class="voice-sum" onclick="event.stopPropagation();speakSummary()">🔊 播報摘要</span>${liveStatusHTML()}幣別：新台幣</div>
           ${staleCount?(_liveFetchP
             ?`<div style="text-align:right;font-size:10px;color:var(--sub);margin-top:4px"><span class="spin-ic">⟳</span> ${staleCount} 檔報價更新中…</div>`
             :`<div style="text-align:right;font-size:10px;color:var(--amber);margin-top:4px;cursor:pointer" onclick="event.stopPropagation();fetchLiveAndRender(true)">⏱ ${rowData.filter(r=>r.isStale).map(r=>_hCode(r.h)).join('、')} 抓不到今日報價，市值估計可能不準，點此重抓${relayUrl()?'':'（可點左上角頭像 →「⚡ 即時報價加速」設定）'}</div>`):''}
@@ -2744,6 +2838,7 @@ function _maybeUrgencyPopup(list){
   const anySell=codes.some(c=>{const h=holdings.find(x=>_hCode(x)===c);return h&&calcUrgency(h,_livePrice(h))?.side==='sell';});
   _openUrgencySheet(codes,anySell?'🚨 需要立即處理':'🔥 立即買入時機');
   try{if(navigator.vibrate)navigator.vibrate([200,100,200]);}catch(e){}
+  if(voiceOn())speak((anySell?'注意，需要立即處理。':'買入時機。')+hits.map(x=>_urgSpeech(x.h,x.u,_livePrice(x.h))).join('。'));
 }
 function renderPortfolioScores(){
   const el=document.getElementById('analysis-content');if(!el)return;
