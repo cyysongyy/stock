@@ -1482,7 +1482,7 @@ async function _fetchLiveAndRender(manual){
     // Create a minimal data object with just the price as a close array
     dataMap[sym]=dataMap[c]={symbol:sym,dates:[v.date],open:[v.price],high:[v.price],low:[v.price],close:[v.price],volume:[null],quote:{regularMarketChangePercent:v.chgPct,longName:v.name},meta:{}};
   });
-  Object.assign(dataCache,dataMap);
+  // 只有一筆價格的 dataMap 不能放進 dataCache：K 線圖會優先讀 dataCache，結果整張圖只剩一個點
   renderPortfolio(dataMap);
   renderWatchlist();
   refreshScores().then(()=>renderPortfolio(dataMap));
@@ -1570,7 +1570,7 @@ async function runMonitorCycle(){if(!holdings.length)return;
   Object.assign(priceCache,twsePrices);localStorage.setItem('tw_price_cache',JSON.stringify(priceCache));
   const dataMap={};
   Object.entries(twsePrices).forEach(([c,v])=>{const sym=c+'.TW';dataMap[sym]=dataMap[c]={symbol:sym,dates:[v.date],open:[v.price],high:[v.price],low:[v.price],close:[v.price],volume:[null],quote:{regularMarketChangePercent:v.chgPct,longName:v.name},meta:{}};});
-  Object.assign(dataCache,dataMap);
+  // （dataMap 只有一筆價格，不放進 dataCache，否則 K 線圖只會畫出一個點）
   // 價格已在上面合併進 priceCache；以前這裡會用 dataCache 整個重建 priceCache，
   // 這次沒抓到的股票價格會整筆消失，留下來的也全被蓋成「今天」的日期（舊價看不出來過期）
   const today=new Date().toLocaleDateString('zh-TW'),newAlerts=[];holdings.forEach(h=>{const sym=h.code.includes('.')?h.code:h.code+'.TW';const d=dataMap[sym]||dataMap[h.code];if(!d)return;const curr=d.close[d.close.length-1];const sigs=getSignals(d);const timeStr=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});if(h.target&&curr>=h.target){const k=h.code+'_target_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'target',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 達目標 $${h.target} 💰`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}if(h.stop&&curr<=h.stop){const k=h.code+'_stop_'+today;if(!alertedKeys.has(k)){alertedKeys.add(k);const a={type:'stop',code:h.code,name:h.name||h.code,msg:`現價 $${curr.toFixed(1)} 跌破停損 $${h.stop} ⚠️`,time:timeStr,date:today};newAlerts.push(a);fireAlert(a);}}// Price change alert (>2% intraday)
@@ -3061,6 +3061,8 @@ async function loadKline(code){
   const body=document.getElementById('kl-body-'+code);if(!body)return;
   const sym=code+'.TW';
   let data=dataCache[sym]||dataCache[code];
+  // K 棒太少（例如只有今天一筆報價）畫不出圖，也算不出均線，當作沒有
+  if(data&&(!data.close||data.close.length<30))data=null;
   if(!data){
     // 優先用 scoring_patch 已抓好的歷史快取（tw_hist_v4_<code>）
     try{
@@ -3084,12 +3086,30 @@ async function loadKline(code){
     }
   }
   dataCache[sym]=data;dataCache[code]=data;
-  renderKlineBody(code,data);
+  renderKlineBody(code,_withLiveCandle(code,data));
+}
+// 歷史 K 線可能是幾小時前快取的；用今天的即時報價補上（或更新）最後一根，圖上的現價與漲跌才會跟首頁一致
+function _withLiveCandle(code,data){
+  const pc=priceCache[code]||priceCache[code+'.TW'];
+  const today=new Date().toLocaleDateString('zh-TW');
+  if(!pc||!pc.price||pc.date!==today||!data||!data.close||!data.close.length)return data;
+  const d=new Date(),lbl=(d.getMonth()+1)+'/'+d.getDate();
+  const n=data.close.length,lastLbl=data.dates[n-1];
+  const px=pc.price,hi=Math.max(pc.high||px,px),lo=Math.min(pc.low||px,px);
+  // 漲跌要跟證交所的昨收比，不是跟快取裡的上一根（快取可能是好幾天前的）
+  const out={...data,livePrev:pc.prev||null,dates:data.dates.slice(),open:data.open.slice(),high:data.high.slice(),low:data.low.slice(),close:data.close.slice(),volume:(data.volume||[]).slice()};
+  if(lastLbl===lbl){
+    out.close[n-1]=px;out.high[n-1]=Math.max(out.high[n-1]||px,hi);out.low[n-1]=Math.min(out.low[n-1]||px,lo);
+  }else if(isMarketOpen()||(pc.vol&&pc.open)){
+    // 今天有成交（盤中，或收盤後拿到的是今天的開盤/成交量）才新增今天這根
+    out.dates.push(lbl);out.open.push(pc.open||px);out.high.push(hi);out.low.push(lo);out.close.push(px);out.volume.push(pc.vol?pc.vol*1000:null);
+  }
+  return out;
 }
 function renderKlineBody(code,data){
   const body=document.getElementById('kl-body-'+code);if(!body)return;
   const last=data.close.length-1;
-  const price=data.close[last],prev=data.close[last-1]||price;
+  const price=data.close[last],prev=data.livePrev||data.close[last-1]||price;
   if(price==null){body.innerHTML='<div style="padding:14px;text-align:center;color:var(--sub);font-size:11px">⚠️ 資料不完整</div>';return;}
   const chg=price-prev,chgPct=prev?chg/prev*100:0;
   const ud=chg>=0?'#ff4757':'#00d68f';
