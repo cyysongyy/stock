@@ -813,8 +813,10 @@ function relayUrl(){return localStorage.getItem(KEY_RELAY)||'';}
 const RELAY_GS_CODE=String.raw`// 台股 Dashboard 即時報價中繼（Google Apps Script）
 // 部署：部署 → 新增部署作業 → 網頁應用程式，執行身分「我」、存取權「所有人」
 // 只接受股票代號查詢，固定向證交所 MIS 查價，MIS 沒回的改問 Yahoo
+// v2：加上 action=inst（三大法人買賣超，證交所 T86，近 5 個交易日，Google 端快取）
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  if (p.action === 'inst') return _out(p, { ok: true, v: 2, inst: _inst(p.codes) });
   var syms = String(p.ex || '').split('|').filter(function (s) {
     return /^(tse|otc)_[0-9A-Z]{4,6}\.tw$/.test(s);
   }).slice(0, 60);
@@ -862,12 +864,68 @@ function doGet(e) {
       });
     }
   }
-  var body = JSON.stringify({ ok: true, at: Date.now(), quotes: quotes });
+  return _out(p, { ok: true, v: 2, at: Date.now(), quotes: quotes });
+}
+
+function _out(p, obj) {
+  var body = JSON.stringify(obj);
   var cb = p.callback;
   if (cb && /^[A-Za-z_$][\w$]*$/.test(cb)) {
     return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}
+
+// 三大法人：往回找最近 5 個有資料的交易日（最多看 12 天），回傳指定代號的 外資／投信／自營商／合計 買賣超（張）
+function _inst(codesParam) {
+  var codes = String(codesParam || '').split(',').filter(function (c) { return /^[0-9A-Z]{4,6}$/.test(c); }).slice(0, 60);
+  var days = [], errs = [], d = new Date();
+  for (var k = 0; k < 12 && days.length < 5; k++, d = new Date(d.getTime() - 86400000)) {
+    var wd = Utilities.formatDate(d, 'Asia/Taipei', 'u');
+    if (wd === '6' || wd === '7') continue;
+    var ds = Utilities.formatDate(d, 'Asia/Taipei', 'yyyyMMdd');
+    var rows = _t86(ds, k === 0, errs);
+    if (!rows) continue;
+    var pick = {};
+    codes.forEach(function (c) { if (rows[c]) pick[c] = rows[c]; });
+    days.push({ date: ds, rows: pick });
+  }
+  return { days: days, errs: errs.slice(0, 3) };
+}
+
+function _t86(ds, isToday, errs) {
+  var cache = CacheService.getScriptCache(), key = 'T86_' + ds, hit = cache.get(key);
+  if (hit === '-') return null;
+  if (hit) return _unpack(hit);
+  var urls = ['https://www.twse.com.tw/rwd/zh/fund/T86?date=' + ds + '&selectType=ALLBUT0999&response=json',
+              'https://www.twse.com.tw/fund/T86?response=json&date=' + ds + '&selectType=ALLBUT0999'];
+  for (var u = 0; u < urls.length; u++) {
+    try {
+      Utilities.sleep(350);  // 證交所對短時間大量請求很敏感
+      var r = UrlFetchApp.fetch(urls[u], { muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (r.getResponseCode() !== 200) { errs.push(ds + ' HTTP ' + r.getResponseCode()); continue; }
+      var j = JSON.parse(r.getContentText());
+      var t = (j.tables && j.tables[0] && j.tables[0].fields) ? j.tables[0] : j;
+      var f = t.fields || [], data = t.data || [];
+      if (!data.length) { cache.put(key, '-', isToday ? 1800 : 21600); return null; }  // 休市或今天還沒公布
+      var idx = function (re) { for (var i = 0; i < f.length; i++) if (re.test(f[i])) return i; return -1; };
+      var iC = idx(/證券代號/), iF = idx(/^外陸資買賣超股數/), iT = idx(/^投信買賣超股數/), iD = idx(/^自營商買賣超股數$/), iA = idx(/三大法人買賣超股數/);
+      if (iC < 0 || iA < 0) { errs.push(ds + ' 欄位不符'); return null; }
+      var lots = function (v) { return Math.round((parseInt(String(v).replace(/,/g, ''), 10) || 0) / 1000); };
+      var packed = data.map(function (row) {
+        return [String(row[iC]).trim(), iF >= 0 ? lots(row[iF]) : 0, iT >= 0 ? lots(row[iT]) : 0, iD >= 0 ? lots(row[iD]) : 0, lots(row[iA])].join(',');
+      }).join(';');
+      try { cache.put(key, packed, isToday ? 3600 : 21600); } catch (ce) {}
+      return _unpack(packed);
+    } catch (err) { errs.push(ds + ' ' + err); }
+  }
+  return null;
+}
+
+function _unpack(packed) {
+  var m = {};
+  packed.split(';').forEach(function (s) { var a = s.split(','); m[a[0]] = [+a[1], +a[2], +a[3], +a[4]]; });
+  return m;
 }
 `;
 async function fetchViaRelay(codes,url){
@@ -883,6 +941,52 @@ async function fetchViaRelay(codes,url){
     if(q.ex==='tse'||q.ex==='otc')_rememberMkt({[q.c]:1},q.ex);
   }
   return out;
+}
+// ── 三大法人買賣超（經 Apps Script 中繼 v2 抓證交所 T86；每小時最多更新一次）──
+const KEY_INST='tw_inst_cache';
+let _instState='';  // '' | 'loading' | 'needUpdate' | 'error'
+function _instCache(){try{return JSON.parse(localStorage.getItem(KEY_INST)||'null');}catch(e){return null;}}
+async function loadInstFlows(force,url){
+  url=url||relayUrl();
+  if(!url||!holdings.length)return null;
+  const c=_instCache(),codes=[...new Set(holdings.map(h=>_hCode(h)))];
+  if(!force&&c&&Date.now()-c.at<60*60*1000&&codes.every(x=>c.codes.includes(x)))return c;
+  _instState='loading';
+  try{
+    // 第一次要往回抓好幾天，Google 那邊比較慢，給 30 秒
+    const j=await _jsonpFetch(url+(url.includes('?')?'&':'?')+'action=inst&codes='+encodeURIComponent(codes.join(',')),30000);
+    if(!j||!j.inst){_instState='needUpdate';return null;}
+    const out={at:Date.now(),codes,days:j.inst.days||[],errs:j.inst.errs||[]};
+    if(out.days.length){localStorage.setItem(KEY_INST,JSON.stringify(out));}
+    _instState=out.days.length?'':'error';
+    if(document.getElementById('app')?.style.display==='block')renderPortfolio();
+    return out;
+  }catch(e){_instState='error';return null;}
+}
+// 單一股票的法人動向：最新一天各法人張數、外資／投信連續買賣超天數與累計
+function instInfo(code){
+  const c=_instCache();if(!c||!c.days||!c.days.length)return null;
+  const rows=c.days.map(d=>({date:d.date,v:d.rows[code]})).filter(x=>x.v);
+  if(!rows.length)return null;
+  const streak=i=>{const s0=Math.sign(rows[0].v[i]);if(!s0)return{n:0,sum:0};let n=0,sum=0;for(const r of rows){if(Math.sign(r.v[i])!==s0)break;n++;sum+=r.v[i];}return{n,sum,side:s0};};
+  const [f,t,d,a]=rows[0].v;
+  return{date:rows[0].date,f,t,d,a,fs:streak(0),ts:streak(1),sum5:rows.reduce((x,r)=>x+r.v[3],0),days:rows.length};
+}
+const _lots=v=>(v>0?'+':'')+v.toLocaleString()+' 張';
+function instBlockHTML(code){
+  const ii=instInfo(code);
+  if(!ii){
+    if(!relayUrl())return'';
+    if(_instState==='needUpdate')return'<div class="tm-row tm-sub">🏦 法人動向：中繼程式需要更新成新版才抓得到（左上角頭像 →「⚡ 即時報價加速」→ 複製程式碼 → 貼上 → 部署新版本）</div>';
+    return'';
+  }
+  const md=ii.date.slice(4,6).replace(/^0/,'')+'/'+ii.date.slice(6).replace(/^0/,'');
+  const col=v=>v>0?'var(--red)':v<0?'var(--green)':'var(--sub)';
+  const st=s=>s.n>=2?`，連 ${s.n} 日${s.side>0?'買超':'賣超'}（累計 ${_lots(s.sum)}）`:'';
+  return`<div class="tm-row">🏦 <b>法人動向</b> <span class="tm-sub">${md}</span>
+    <div>外資 <b style="color:${col(ii.f)}">${_lots(ii.f)}</b><span class="tm-sub">${st(ii.fs)}</span></div>
+    <div>投信 <b style="color:${col(ii.t)}">${_lots(ii.t)}</b><span class="tm-sub">${st(ii.ts)}</span>　自營商 <b style="color:${col(ii.d)}">${_lots(ii.d)}</b></div>
+    <div class="tm-sub">三大法人合計 ${_lots(ii.a)}・近 ${ii.days} 日合計 ${_lots(ii.sum5)}</div></div>`;
 }
 function openRelayModal(){
   document.getElementById('user-menu').classList.remove('open');
@@ -910,9 +1014,16 @@ async function testRelay(){
   try{
     const r=await fetchViaRelay(codes,url);
     const got={...r.yahoo,...r.mis},n=Object.keys(got).length,sec=((Date.now()-t0)/1000).toFixed(1);
-    out.innerHTML=n
+    const qHTML=n
       ?`<span style="color:#00c853">✓ 成功，${sec} 秒抓到 ${n}/${codes.length} 檔</span><br><span style="color:var(--sub)">${Object.entries(got).map(([c,v])=>c+' '+v.price).join('、')}</span>`
       :`<span style="color:var(--amber)">連上了但沒有抓到報價（${sec} 秒），請確認部署的存取權是「所有人」</span>`;
+    out.innerHTML=qHTML+'<br><span style="color:var(--sub)">法人資料測試中…（第一次最多 30 秒）</span>';
+    const inst=await loadInstFlows(true,url);
+    out.innerHTML=qHTML+(inst&&inst.days.length
+      ?`<br><span style="color:#00c853">✓ 法人資料：抓到最近 ${inst.days.length} 個交易日</span>`
+      :_instState==='needUpdate'
+        ?'<br><span style="color:var(--amber)">法人資料：中繼程式是舊版，請按「複製程式碼」貼上新版，再「部署」→「管理部署作業」→ 鉛筆 → 版本選「新版本」→ 部署</span>'
+        :`<br><span style="color:var(--amber)">法人資料：證交所沒有回應${inst&&inst.errs&&inst.errs.length?'（'+_escH(inst.errs.join('、'))+'）':''}，稍後再試</span>`);
   }catch(e){out.innerHTML=`<span style="color:var(--red)">連不上：${_escH(e.message)}。請確認網址正確、部署存取權選「所有人」</span>`;}
 }
 function saveRelay(){
@@ -1216,13 +1327,13 @@ ${sigs.map(s=>`・${s.name}：${s.desc}（${s.type==='bull'?'🟢多':s.type==='
 }
 
 // JSONP helper — works on iOS Safari where fetch/CORS to Apps Script often fails
-function _jsonpFetch(url){
+function _jsonpFetch(url,ms){
   return new Promise((resolve,reject)=>{
     // 同一毫秒可能有兩個請求（例如快速更新與完整更新同時發），callback 名稱要唯一
     _jsonpFetch.n=(_jsonpFetch.n||0)+1;
     const cb='_gs'+Date.now()+'_'+_jsonpFetch.n;
     const s=document.createElement('script');
-    const timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},10000);
+    const timer=setTimeout(()=>{cleanup();reject(new Error('timeout'));},ms||10000);
     function cleanup(){delete window[cb];s.remove();clearTimeout(timer);}
     window[cb]=function(data){cleanup();resolve(data);};
     s.src=url+(url.includes('?')?'&':'?')+'callback='+cb;
@@ -1493,6 +1604,7 @@ function showApp(name){
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
   startLiveLoop();
   updateVoicePill();
+  setTimeout(()=>loadInstFlows(),2500);
 }
 // 盤中即時更新：每 10 秒只問 TWSE MIS（最快、最即時），每 60 秒跑一次含所有備援的完整更新。
 // 切換使用者會再呼叫 showApp，迴圈只能啟動一次，否則請求量會倍增被 MIS 擋
@@ -1547,7 +1659,7 @@ async function fastPriceTick(){
 let _liveFetchP=null;
 function fetchLiveAndRender(manual){
   if(_liveFetchP)return _liveFetchP;
-  _liveFetchP=_fetchLiveAndRender(manual).finally(()=>{_liveFetchP=null;renderPortfolio();});
+  _liveFetchP=_fetchLiveAndRender(manual).finally(()=>{_liveFetchP=null;renderPortfolio();loadInstFlows();});
   // 讓還沒更新的那幾檔先顯示「更新中」，而不是一打開就看到「非今日報價」
   setTimeout(()=>{if(_liveFetchP)renderPortfolio();},0);
   return _liveFetchP;
@@ -2045,7 +2157,8 @@ async function fetchTWSEPrices(codes,onPartial){
   const apply=(part,r)=>{
     const upd={};
     for(const[c,v]of Object.entries(part)){if(codes.includes(c)&&(rank[c]||0)<r){prices[c]=v;rank[c]=r;upd[c]=v;}}
-    if(onPartial&&Object.keys(upd).length&&codes.some(c=>!prices[c]||rank[c]<4)){try{onPartial(upd);}catch(e){}}
+    // 任何來源一拿到更好的報價就先畫出來，不等還在跑（或卡在逾時）的其他來源
+    if(onPartial&&Object.keys(upd).length){try{onPartial(upd);}catch(e){}}
     return Object.keys(upd).length;
   };
   // ⓪ 有設定 Apps Script 中繼就同時問（iPhone 上最穩的即時來源）
@@ -2329,6 +2442,8 @@ async function renderPortfolio(liveDataMap){
     const flowBadge=(()=>{const code=_hCode(h),f=flowInfo(pc2),vr=volRatio(code,pc2);let o='';
       if(f)o+=`<span class="flow-badge ${f.side}" title="五檔委買 ${f.bid} 張 vs 委賣 ${f.ask} 張">${f.side==='buy'?'買盤':f.side==='sell'?'賣盤':'均衡'} ${_pct(f.share)}</span>`;
       if(vr&&vr.label!=='正常')o+=`<span class="flow-badge vr-${vr.label}" title="量比：今天成交量是近 20 日同時段平均的 ${vr.r.toFixed(1)} 倍">量比 ${vr.r.toFixed(1)}x</span>`;
+      const ii=instInfo(code);
+      if(ii&&ii.fs.n>=2)o+=`<span class="flow-badge ${ii.fs.side>0?'buy':'sell'}" title="外資連 ${ii.fs.n} 日${ii.fs.side>0?'買超':'賣超'}，累計 ${ii.fs.sum} 張">外資連${ii.fs.n}${ii.fs.side>0?'買':'賣'}</span>`;
       return o;})();
     const volBadge=(()=>{if(!todayVol)return'';const k=todayVol/1000;const cls=k>5000?'high':k>500?'normal':'low';const lbl=k>=1000?(k/1000).toFixed(1)+'M':k.toFixed(0)+'K';return`<span class="vol-badge ${cls}">量${lbl}</span>`;})();
     // Target/stop progress bars
@@ -2412,7 +2527,7 @@ function renderDetailPanel(rd){
     </div>
     ${targetBar}
     ${(()=>{const code=_hCode(h);const plan=curr?buyPlan(code,curr):null;const ts=plan?touchStats(code,curr,plan.steps[0].price):null;
-      const body=flowBlockHTML(code)+(plan?`<div class="tm-row">🪜 <b>建議買價</b> $${fmtTick(plan.steps[0].price)} <span class="tm-sub">${_escH(plan.steps[0].basis)}</span>${ts?`<div class="tm-sub">⏱ 到價機率 ${touchLine(ts)}</div>`:''}</div>`:'')+sellTargetsHTML(h,code,curr);
+      const body=flowBlockHTML(code)+instBlockHTML(code)+(plan?`<div class="tm-row">🪜 <b>建議買價</b> $${fmtTick(plan.steps[0].price)} <span class="tm-sub">${_escH(plan.steps[0].basis)}</span>${ts?`<div class="tm-sub">⏱ 到價機率 ${touchLine(ts)}</div>`:''}</div>`:'')+sellTargetsHTML(h,code,curr);
       return body?`<div class="dp-flow" onclick="event.stopPropagation()">${body}</div>`:'';})()}
     ${h.note?`<div style="font-size:10px;color:var(--sub);margin-bottom:8px">📝 ${h.note}</div>`:''}
     ${(()=>{const code=h.code.replace('.TW','');const c=aiCache[code];if(!c)return`<div style="margin:8px 0"><button onclick="aiAnalyzeSingle('${code}',${i});event.stopPropagation()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;border-radius:8px;padding:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">🤖 AI 深度分析此股</button></div>`;const col={buy:'#00d68f',sell:'#ff4757',hold:'#f5a623'};const lbl={buy:'🟢 建議買入',sell:'🔴 建議賣出',hold:'🟡 建議觀望'};const html=c.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');return`<div style="margin:8px 0;padding:10px;background:${col[c.verdict]}11;border:1px solid ${col[c.verdict]}44;border-radius:8px"><div style="font-size:12px;font-weight:700;color:${col[c.verdict]};margin-bottom:6px">${lbl[c.verdict]}</div><div style="font-size:11px;line-height:1.7;color:var(--text)">${html}</div><div style="font-size:9px;color:var(--sub);margin-top:6px">更新：${new Date(c.ts).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · <span onclick="aiAnalyzeSingle('${code}',${i});event.stopPropagation()" style="color:var(--blue);cursor:pointer">重新分析</span></div></div>`;})()}
@@ -2797,6 +2912,10 @@ function computeAlerts(h,curr){
   if(high20&&curr>high20&&vr&&vr.r>=1.3)A('breakout','info','buy',`放量突破近月高 ${fmtTick(high20)}`,`量比 ${vr.r.toFixed(1)} 倍，突破較可信`);
   // 五檔賣壓
   if(f&&f.ask>=f.bid*2.5&&chg!=null&&chg<0)A('sellpress','info','risk',`賣單壓力大`,`五檔委賣 ${f.ask.toLocaleString()} 張，是委買的 ${(f.ask/Math.max(1,f.bid)).toFixed(1)} 倍`);
+  // 法人：外資連 3 日以上賣超 → 風險；外資、投信同一天都買超且外資連買 → 買進參考
+  const ii=instInfo(code);
+  if(ii&&ii.fs.n>=3&&ii.fs.side<0)A('fsell'+ii.date,'warn','risk',`外資連 ${ii.fs.n} 日賣超`,`累計 ${_lots(ii.fs.sum)}，籌碼面偏弱`);
+  if(ii&&ii.f>0&&ii.t>0&&ii.fs.n>=2)A('fbuy'+ii.date,'info','buy',`外資投信同步買超`,`外資連 ${ii.fs.n} 日買超，投信 ${_lots(ii.t)}`);
   // 支撐剛失守或爆量下跌時，「接近建議價」不該催人買：降成參考並提醒等止穩
   if(out.some(a=>/:(breaklow20|voldrop)$/.test(a.key)))out.forEach(a=>{if(/:(nearbuy|atbuy)$/.test(a.key)){a.level='info';a.detail+='；但支撐剛失守，建議等止穩再買';}});
   return out;
@@ -2906,7 +3025,7 @@ function urgencyCardHTML(h){
         <div style="font-size:15px;font-weight:800">${code} ${n!==code?_escH(n):''}</div>
         <div style="font-size:15px;font-weight:700">${curr!=null?'$'+curr.toFixed(2):'—'} ${chg}</div>
       </div>
-      ${banner}${flowBlockHTML(code)}${met}${sellInfo}
+      ${banner}${flowBlockHTML(code)}${instBlockHTML(code)}${met}${sellInfo}
       ${timingBlockHTML(dc?.timing,u?.side==='sell',curr,code)}
       ${sellTargetsHTML(h,code,curr)}
       <button onclick="closeModal('modal-urgency');openKlineFor('${code}')" style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:${u&&u.level===3?col:'var(--blue)'};color:${u&&u.side==='buy'&&u.level===3?'#04210f':'#fff'};font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
