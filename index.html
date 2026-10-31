@@ -372,6 +372,16 @@ select option{background:var(--card2);color:var(--text)}
 .flow-badge.vr-爆量{background:#ffa50233;color:#ffa502}.flow-badge.vr-放量{background:#4d9eff33;color:#4d9eff}.flow-badge.vr-量縮{background:#33333388;color:var(--sub)}
 .flow-bar{position:relative;height:6px;border-radius:3px;background:#00d68f88;margin:4px 0 2px;overflow:hidden}
 .flow-bar i{position:absolute;left:0;top:0;bottom:0;background:#ff4757}
+.alert-sec{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
+.alert-sec-title{font-size:12px;font-weight:800;margin-bottom:4px;display:flex;justify-content:space-between;align-items:baseline}
+.alert-sec-title span{font-size:10px;color:var(--sub);font-weight:400}
+.alert-item{display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-radius:8px;cursor:pointer}
+.alert-item.lv-urgent{background:#00c85314}.alert-item.lv-warn{background:#ffa50210}
+.alert-ic{font-size:12px;line-height:1.5}
+.alert-main{flex:1;min-width:0}
+.alert-t{font-size:12px}.alert-d{font-size:11px;color:var(--sub)}
+.alert-at{font-size:10px;color:var(--sub);white-space:nowrap}
+.alert-tt{font-weight:700;color:var(--text)}.alert-tt.lv-urgent{color:#00c853}.alert-tt.lv-warn{color:#ffa502}
 .dp-flow{background:var(--card2);border-radius:10px;padding:2px 10px 8px;margin:8px 0}
 .hr-mkt.px-up{animation:pxFlashUp 1.6s ease-out}
 .hr-mkt.px-down{animation:pxFlashDown 1.6s ease-out}
@@ -2368,6 +2378,7 @@ async function renderPortfolio(liveDataMap){
       ${rows}
     </div>`;
   _maybeUrgencyPopup(rowData);
+  _processAlerts(rowData);
 }
 
 function renderDetailPanel(rd){
@@ -2754,6 +2765,95 @@ function suggestHTML(sp,stale,code){
 function urgencyChipHTML(u){return`<div class="urg-chip ${u.side}${u.level}" title="${u.label}：${_escH(u.reason)}"><span>${u.short[0]}</span><span>${u.short[1]}</span></div>`;}
 function urgencyMeterHTML(level){return`<div class="urg-meter">${[1,2,3].map(n=>`<i class="${n<=level?'on':''}"></i>`).join('')}</div>`;}
 function _urgSort(a,b){return b.u.level-a.u.level||(a.u.side==='sell'?-1:1)-(b.u.side==='sell'?-1:1);}
+// ── 即時預警：在「立即買賣」之前先提醒（接近建議價、接近停利、急跌急漲、跌破支撐、爆量、賣壓、大盤急跌）──
+// 只用 App 已經有的資料（即時報價、K 線、五檔、量比），每次重畫（盤中約 10 秒）重新判斷
+function _ma20Of(code){const H=_histFor(code);if(!H||H.close.length<20)return null;return H.close.slice(-20).reduce((a,b)=>a+b,0)/20;}
+function _prevLow20(code){const H=_histFor(code);if(!H)return null;const n=H.low.length,w=H.low.slice(Math.max(0,n-21),n-1);return w.length>=10?Math.min(...w):null;}
+function _prevHigh20(code){const H=_histFor(code);if(!H)return null;const n=H.high.length,w=H.high.slice(Math.max(0,n-21),n-1);return w.length>=10?Math.max(...w):null;}
+function computeAlerts(h,curr){
+  const code=_hCode(h),pc=_pcFor(code),out=[];
+  if(!curr||!pc)return out;
+  const chg=pc.chgPct,prev=pc.prev||null;
+  const A=(key,level,side,title,detail)=>out.push({key:code+':'+key,code,level,side,title,detail});
+  // 接近／到達建議買價
+  const sp=suggestBuyPrice(h,curr);
+  if(sp&&!sp.pending){
+    const gap=(curr/sp.price-1)*100,ts=touchStats(code,curr,sp.price);
+    if(gap<=0)A('atbuy','urgent','buy',`已到建議買價 ${fmtTick(sp.price)}`,`依據${sp.basis}，可以掛單`);
+    else if(gap<=1)A('nearbuy','warn','buy',`接近建議買價 ${fmtTick(sp.price)}`,`只差 ${gap.toFixed(1)}%${ts&&ts.p5>=0.05?`，過去 5 日內碰到機率 ${_pct(ts.p5)}`:''}`);
+  }
+  // 接近停利（到達停利已經是「立即賣出」）
+  if(h.target&&curr<h.target&&curr>=h.target*0.98)A('neartarget','warn','sell',`接近停利 ${h.target}`,`只差 ${((h.target/curr-1)*100).toFixed(1)}%，可以先準備賣單`);
+  // 今日急跌／急漲
+  if(chg!=null&&chg<=-3)A('drop','warn','risk',`今日急跌 ${chg.toFixed(1)}%`,'留意是否跌破支撐，先不要急著攤平');
+  if(chg!=null&&chg>=4)A('surge','info','sell',`今日大漲 +${chg.toFixed(1)}%`,'可以考慮分批停利，留一部分續抱');
+  // 跌破月線／近月低（昨收還在上面、現在跌破，才算「剛跌破」）
+  const ma20=_ma20Of(code),low20=_prevLow20(code),high20=_prevHigh20(code);
+  if(ma20&&prev&&prev>=ma20&&curr<ma20)A('breakma20','warn','risk',`跌破月線 ${fmtTick(ma20)}`,'短期趨勢轉弱');
+  if(low20&&curr<low20)A('breaklow20','warn','risk',`跌破近一個月低點 ${fmtTick(low20)}`,'支撐失守，等站回再考慮買進');
+  // 量價：爆量下跌、放量突破
+  const vr=volRatio(code,pc),f=flowInfo(pc);
+  if(vr&&vr.r>=2&&chg!=null&&chg<=-2)A('voldrop','warn','risk',`爆量下跌（量比 ${vr.r.toFixed(1)} 倍）`,'可能有大量賣壓或出貨');
+  if(high20&&curr>high20&&vr&&vr.r>=1.3)A('breakout','info','buy',`放量突破近月高 ${fmtTick(high20)}`,`量比 ${vr.r.toFixed(1)} 倍，突破較可信`);
+  // 五檔賣壓
+  if(f&&f.ask>=f.bid*2.5&&chg!=null&&chg<0)A('sellpress','info','risk',`賣單壓力大`,`五檔委賣 ${f.ask.toLocaleString()} 張，是委買的 ${(f.ask/Math.max(1,f.bid)).toFixed(1)} 倍`);
+  // 支撐剛失守或爆量下跌時，「接近建議價」不該催人買：降成參考並提醒等止穩
+  if(out.some(a=>/:(breaklow20|voldrop)$/.test(a.key)))out.forEach(a=>{if(/:(nearbuy|atbuy)$/.test(a.key)){a.level='info';a.detail+='；但支撐剛失守，建議等止穩再買';}});
+  return out;
+}
+// 同一檔的多則預警合併成一筆（畫面一行、語音一句），嚴重度取最高的
+function groupAlerts(alerts){
+  const by=new Map();
+  alerts.forEach(a=>{if(!by.has(a.code))by.set(a.code,[]);by.get(a.code).push(a);});
+  return[...by.values()].map(g=>{g.sort((a,b)=>ALERT_RANK[b.level]-ALERT_RANK[a.level]);return{...g[0],titles:g.map(a=>a.title),items:g};})
+    .sort((a,b)=>ALERT_RANK[b.level]-ALERT_RANK[a.level]);
+}
+function marketAlert(){
+  const t=(typeof _taiexCache!=='undefined')?_taiexCache:null;
+  if(t&&t.chgPct!=null&&t.chgPct<=-1.5)return{key:'TAIEX:drop',code:'大盤',level:'warn',side:'risk',title:`大盤急跌 ${t.chgPct}%`,detail:'整體賣壓重，買進分批、別一次重壓'};
+  return null;
+}
+const ALERT_RANK={urgent:3,warn:2,info:1};
+// 今天出現過的預警記在 localStorage：第一次出現的時間、是否已經提醒過（每種預警每天只提醒一次）
+function _alertFeed(){
+  const today=new Date().toLocaleDateString('zh-TW');
+  let f={};try{f=JSON.parse(localStorage.getItem('tw_alert_feed')||'{}');}catch(e){}
+  if(f.date!==today)f={date:today,seen:{}};
+  return f;
+}
+function collectAlerts(list){
+  const all=[];
+  list.forEach(({h,curr,isStale})=>{if(!isStale)computeAlerts(h,curr).forEach(a=>all.push({...a,h}));});
+  const m=marketAlert();if(m)all.push(m);
+  return all.sort((a,b)=>ALERT_RANK[b.level]-ALERT_RANK[a.level]);
+}
+function _processAlerts(list){
+  const alerts=collectAlerts(list),feed=_alertFeed(),fresh=[];
+  const now=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false});
+  alerts.forEach(a=>{if(!feed.seen[a.key]){feed.seen[a.key]={at:now,notified:false};}if(!feed.seen[a.key].notified&&a.level!=='info')fresh.push(a);});
+  // 只在盤中即時提醒（盤後打開看到的是收盤狀態，不需要跳）
+  if(fresh.length&&isMarketOpen()){
+    fresh.forEach(a=>{feed.seen[a.key].notified=true;});
+    const nm=a=>a.h?_spokenName(a.h):a.code;
+    const g=groupAlerts(fresh);
+    showToast('🔔 '+g.map(x=>`${x.h?_hCode(x.h):x.code} ${x.titles.join('、')}`).join('；'),6000);
+    try{if(navigator.vibrate)navigator.vibrate([120,80,120]);}catch(e){}
+    if(voiceOn())speak('預警。'+g.slice(0,3).map(x=>`${nm(x)}，${x.titles.join('，')}`).join('。')+(g.length>3?`。另外還有${g.length-3}檔有預警，請看畫面`:''));
+    fresh.forEach(a=>fireAlert({type:a.side==='buy'?'signal':a.side==='sell'?'target':'stop',code:a.h?_hCode(a.h):a.code,name:a.h?_klName(a.h,_hCode(a.h)):'',msg:`${a.title}：${a.detail}`}));
+  }
+  try{localStorage.setItem('tw_alert_feed',JSON.stringify(feed));}catch(e){}
+}
+function alertsHTML(list){
+  const alerts=collectAlerts(list);if(!alerts.length)return'';
+  const feed=_alertFeed(),ic={buy:'🟢',sell:'🟠',risk:'🔻'},groups=groupAlerts(alerts);
+  return`<div class="alert-sec"><div class="alert-sec-title">🔔 即時預警<span>${groups.length} 檔・盤中出現時會跳提示${voiceOn()?'並念出來':''}</span></div>${groups.slice(0,8).map(a=>`
+    <div class="alert-item lv-${a.level}"${a.h?` onclick="openUrgencyDetail('${_hCode(a.h)}')"`:''}>
+      <span class="alert-ic">${ic[a.side]||'🔔'}</span>
+      <div class="alert-main"><div class="alert-t"><b>${a.h?_hCode(a.h)+' '+_escH(_klName(a.h,_hCode(a.h))!==_hCode(a.h)?_klName(a.h,_hCode(a.h)):''):a.code}</b></div>
+        ${a.items.map(x=>`<div class="alert-d"><span class="alert-tt lv-${x.level}">${_escH(x.title)}</span>　${_escH(x.detail)}</div>`).join('')}</div>
+      <span class="alert-at">${a.items.map(x=>feed.seen[x.key]?.at).filter(Boolean).sort()[0]||''}</span>
+    </div>`).join('')}</div>`;
+}
 function urgencyBoardHTML(list){
   const anyAnalyzed=holdings.some(h=>typeof dipCache!=='undefined'&&dipCache[_hCode(h)]);
   const items=list.filter(x=>x.u).sort(_urgSort);
@@ -2764,7 +2864,7 @@ function urgencyBoardHTML(list){
         ${urgencyMeterHTML(u.level)}
       </div>`;}).join('')
     :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
-  return`<div class="urg-board"><div class="urg-board-title">⚡ 買賣急迫性<span>依急迫程度排序・點擊看細節</span></div>${body}</div>`;
+  return`<div class="urg-board"><div class="urg-board-title">⚡ 買賣急迫性<span>依急迫程度排序・點擊看細節</span></div>${body}${alertsHTML(list)}</div>`;
 }
 // 止跌確認、回測、分批價、相對位置——首頁細節與分析頁卡片共用
 // sell=true 時是賣出訊號，不顯示止跌確認/回測/分批買進這些買進用的資訊
