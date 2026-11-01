@@ -1,8 +1,9 @@
 /* 台股 Dashboard Service Worker — App Shell 快取，離線可開啟 */
-const CACHE = 'twdash-v3';
+const CACHE = 'twdash-v4';
 const SHELL = [
   './',
   './index.html',
+  './dividends.html',
   './ipo_patch.js',
   './scoring_patch.js',
   './manifest.json',
