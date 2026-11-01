@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>💰 股息日曆</title>
+<style>
+:root{--bg:#0f1419;--card:#1a212b;--line:#2a3441;--tx:#e6edf3;--mut:#8b98a8;--red:#f6465d;--grn:#2ebd85;--acc:#f0b90b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 -apple-system,"Noto Sans TC",sans-serif;padding:12px;max-width:860px;margin:auto}
+h1{font-size:20px;margin:8px 0}h2{font-size:16px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi div{text-align:center}.kpi b{display:block;font-size:20px;color:var(--acc)}.kpi span{font-size:12px;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--mut);font-weight:500}
+input,select,button{background:#0f1419;color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:14px}
+button{cursor:pointer;background:#243044}button.pri{background:var(--acc);color:#000;border:0;font-weight:600}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}.row input{flex:1;min-width:90px}
+.bars{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;align-items:end;height:130px}
+.bars div{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;font-size:11px;color:var(--mut)}
+.bars i{display:block;width:100%;background:var(--acc);border-radius:4px 4px 0 0;min-height:1px}
+.tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#243044;color:var(--mut)}.tag.mine{background:var(--acc);color:#000}
+.mut{color:var(--mut);font-size:12px}.del{color:var(--red);cursor:pointer;border:0;background:none}
+</style>
+</head>
+<body>
+<h1>💰 股息日曆與現金流</h1>
+<div class="mut">讀取同網域「台股 Dashboard」的持股（使用者：<span id="who">—</span>）。僅供參考，不構成投資建議。</div>
+
+<div class="card kpi" style="margin-top:10px">
+  <div><b id="k-year">0</b><span>預估年度股息 (稅前)</span></div>
+  <div><b id="k-month">0</b><span>月均現金流</span></div>
+  <div><b id="k-yield">0%</b><span>對成本殖利率</span></div>
+</div>
+
+<div class="card">
+  <h2>📅 12 個月現金流（依發放月份）</h2>
+  <div class="bars" id="bars"></div>
+  <label class="mut"><input type="checkbox" id="nhi" checked> 單筆 ≥ 20,000 扣二代健保補充保費 2.11%</label>
+</div>
+
+<div class="card">
+  <h2>📌 即將除權息（來自 TWSE 預告表）</h2>
+  <div class="row"><button onclick="loadUpcoming()">🔄 更新預告</button><span class="mut" id="up-status"></span></div>
+  <table id="up"><thead><tr><th>日期</th><th>股票</th><th>類型</th><th>股利</th><th></th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="card">
+  <h2>🧾 股利紀錄（手動／採用預告）</h2>
+  <div class="row">
+    <input id="f-code" placeholder="代號 2330" style="max-width:100px">
+    <input id="f-dps" type="number" step="0.01" placeholder="每股現金股利">
+    <input id="f-ex" type="date" title="除息日">
+    <input id="f-pay" type="date" title="發放日">
+    <button class="pri" onclick="addRec()">新增</button>
+  </div>
+  <table id="recs"><thead><tr><th>股票</th><th>每股</th><th>除息</th><th>發放</th><th>預估入帳</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="mut">沒有紀錄的持股，會用「近一年殖利率 × 市值」估算（資料來源 BWIBBU_d）。</div>
+</div>
+
+<div class="card">
+  <h2>📈 股息再投入試算</h2>
+  <div class="row">
+    <label class="mut">年數 <input id="s-y" type="number" value="10" style="width:70px"></label>
+    <label class="mut">股利成長% <input id="s-g" type="number" value="3" style="width:70px"></label>
+    <label class="mut">股價成長% <input id="s-p" type="number" value="4" style="width:70px"></label>
+    <label class="mut"><input type="checkbox" id="s-re" checked> 再投入</label>
+    <button onclick="simulate()">計算</button>
+  </div>
+  <div id="sim" class="mut"></div>
+</div>
+
+<div class="card" id="nohold" style="display:none">
+  <h2>找不到持股</h2>
+  <div class="mut">請把此檔放在與 Dashboard 相同網域（如 GitHub Pages 同一個帳號），或貼上 Dashboard 匯出的 JSON：</div>
+  <div class="row"><input type="file" id="imp" accept=".json"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id), fmt=n=>Math.round(n).toLocaleString('zh-TW');
+let holdings=[], recs=JSON.parse(localStorage.getItem('div_recs')||'[]'), yields={}, prices={}, upcoming=[];
+const saveRecs=()=>localStorage.setItem('div_recs',JSON.stringify(recs));
+
+/* ---- 讀取持股（沿用 Dashboard 的命名空間規則 uid:tw_holdings） ---- */
+function loadHoldings(){
+  let uid=localStorage.getItem('tw_active_uid'),users=[];
+  try{users=JSON.parse(localStorage.getItem('tw_users')||'[]')}catch(e){}
+  const u=users.find(x=>x.id===uid); $('who').textContent=u?u.name:'—';
+  const raw=localStorage.getItem((uid?uid+':':'')+'tw_holdings')||localStorage.getItem('tw_holdings');
+  try{holdings=JSON.parse(raw||'[]')}catch(e){holdings=[]}
+  try{prices=JSON.parse(localStorage.getItem('tw_price_cache')||'{}')}catch(e){}
+  $('nohold').style.display=holdings.length?'none':'block';
+}
+$('imp').onchange=e=>{const r=new FileReader();r.onload=ev=>{try{holdings=JSON.parse(ev.target.result).holdings||[];render()}catch(x){alert('格式錯誤')}};r.readAsText(e.target.files[0])};
+
+function priceOf(h){
+  const p=prices[h.code]||prices[h.code+'.TW'];
+  const v=p&&(p.price??p.z??p.close??p.p); return +v>0?+v:h.cost;
+}
+/* 民國日期 → ISO */
+function toISO(s){
+  s=String(s||'').replace(/\D/g,''); if(s.length===7)s=(+s.slice(0,3)+1911)+s.slice(3);
+  return s.length===8?`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`:'';
+}
+const fetchJ=async u=>{const c=new AbortController();setTimeout(()=>c.abort(),15000);const r=await fetch(u,{signal:c.signal});if(!r.ok)throw 0;return r.json()};
+
+async function loadYields(){
+  try{
+    (await fetchJ('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d')).forEach(x=>{
+      const y=parseFloat(x.DividendYield); if(x.Code&&y>0)yields[x.Code]=y/100;
+    });
+  }catch(e){}
+  try{
+    (await fetchJ('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_PER_PBR_DY')).forEach(x=>{
+      const y=parseFloat(x.YieldRatio||x.DividendYield); const c=x.SecuritiesCompanyCode||x.Code; if(c&&y>0)yields[c]=y/100;
+    });
+  }catch(e){}
+}
+
+/* ---- 預告表（欄位名稱不確定，採寬鬆比對） ---- */
+async function loadUpcoming(){
+  $('up-status').textContent='載入中…';
+  try{
+    const d=await fetchJ('https://openapi.twse.com.tw/v1/exchangeReport/TWT48U');
+    upcoming=d.map(x=>{
+      const k=Object.keys(x), g=re=>{const kk=k.find(a=>re.test(a));return kk?x[kk]:''};
+      const cash=parseFloat(String(g(/cash|現金/i)).replace(/,/g,''));
+      return{date:toISO(g(/^date$|日期|資料日期|除/i)||x.Date),code:String(g(/^code$|代號/i)).trim(),name:g(/^name$|名稱/i),
+             type:g(/exdividend|權|息/i),cash:isNaN(cash)?null:cash};
+    }).filter(x=>x.code&&x.date).sort((a,b)=>a.date.localeCompare(b.date));
+    $('up-status').textContent=`共 ${upcoming.length} 檔，持股相關者標示 ★`;
+  }catch(e){upcoming=[];$('up-status').textContent='無法取得預告（可能被瀏覽器或網路擋下），請改用手動新增'}
+  renderUpcoming();
+}
+function renderUpcoming(){
+  const mine=new Set(holdings.map(h=>h.code));
+  const today=new Date().toISOString().slice(0,10);
+  const rows=upcoming.filter(x=>x.date>=today).sort((a,b)=>(mine.has(b.code)-mine.has(a.code))||a.date.localeCompare(b.date)).slice(0,40);
+  $('up').tBodies[0].innerHTML=rows.map(x=>`<tr><td>${x.date.slice(5)}</td><td>${mine.has(x.code)?'<span class="tag mine">★</span> ':''}${x.code} ${x.name||''}</td><td>${x.type||''}</td><td>${x.cash??'—'}</td>
+    <td>${mine.has(x.code)?`<button onclick="adopt('${x.code}','${x.date}',${x.cash??'null'})">採用</button>`:''}</td></tr>`).join('')||'<tr><td colspan=5 class="mut">無資料</td></tr>';
+}
+function adopt(code,ex,cash){
+  if(cash==null){cash=parseFloat(prompt(`${code} 每股現金股利？`));if(!(cash>=0))return}
+  recs.push({code,dps:cash,ex,pay:''});saveRecs();render();
+}
+function addRec(){
+  const code=$('f-code').value.trim().toUpperCase(),dps=parseFloat($('f-dps').value);
+  if(!code||!(dps>=0)){alert('請填代號與每股股利');return}
+  recs.push({code,dps,ex:$('f-ex').value,pay:$('f-pay').value});saveRecs();
+  ['f-code','f-dps','f-ex','f-pay'].forEach(i=>$(i).value='');render();
+}
+const delRec=i=>{recs.splice(i,1);saveRecs();render()};
+
+/* ---- 核心：計算年度現金流 ---- */
+function net(a){return $('nhi').checked&&a>=20000?a*(1-0.0211):a}
+function compute(){
+  const month=Array(12).fill(0), items=[]; let total=0, cost=0;
+  holdings.forEach(h=>{
+    cost+=h.qty*h.cost;
+    const mine=recs.filter(r=>r.code===h.code);
+    if(mine.length){
+      mine.forEach(r=>{
+        const amt=net(r.dps*h.qty), m=r.pay?new Date(r.pay).getMonth():(r.ex?(new Date(r.ex).getMonth()+1)%12:0);
+        month[m]+=amt; total+=amt; items.push({h,r,amt});
+      });
+    }else if(yields[h.code]){ // 無紀錄：以殖利率估算，平均分到 12 個月
+      const amt=priceOf(h)*h.qty*yields[h.code]; total+=net(amt); for(let i=0;i<12;i++)month[i]+=net(amt)/12;
+    }
+  });
+  return{month,total,cost,items};
+}
+function render(){
+  const c=compute();
+  $('k-year').textContent=fmt(c.total);$('k-month').textContent=fmt(c.total/12);
+  $('k-yield').textContent=c.cost?(c.total/c.cost*100).toFixed(2)+'%':'0%';
+  const mx=Math.max(...c.month,1);
+  $('bars').innerHTML=c.month.map((v,i)=>`<div title="${fmt(v)}"><span>${v?fmt(v/1000)+'k':''}</span><i style="height:${v/mx*100}%"></i>${i+1}月</div>`).join('');
+  const nm=Object.fromEntries(holdings.map(h=>[h.code,h.name]));
+  $('recs').tBodies[0].innerHTML=recs.map((r,i)=>{
+    const h=holdings.find(x=>x.code===r.code);
+    return`<tr><td>${r.code} ${nm[r.code]||''}</td><td>${r.dps}</td><td>${r.ex?r.ex.slice(5):'—'}</td><td>${r.pay?r.pay.slice(5):'—'}</td><td>${h?fmt(net(r.dps*h.qty)):'<span class=mut>未持有</span>'}</td><td><button class="del" onclick="delRec(${i})">✕</button></td></tr>`
+  }).join('')||'<tr><td colspan=6 class="mut">尚無紀錄</td></tr>';
+  renderUpcoming();
+}
+
+/* ---- 再投入試算 ---- */
+function simulate(){
+  const c=compute(); let y=+$('s-y').value, g=+$('s-g').value/100, p=+$('s-p').value/100, re=$('s-re').checked;
+  const mv=holdings.reduce((s,h)=>s+priceOf(h)*h.qty,0);
+  if(!mv||!c.total){$('sim').textContent='需要持股與股利資料';return}
+  let value=mv, div=c.total, cash=0;
+  for(let i=1;i<=y;i++){ // 市值成長，股利隨成長率成長；再投入則股利買進同比例資產
+    value*=1+p; div*=1+g;
+    if(re)value+=div; else cash+=div;
+  }
+  $('sim').innerHTML=`${y} 年後：市值約 <b>${fmt(value)}</b>，第 ${y} 年股利約 <b>${fmt(div)}</b>`+(re?'（股利全數再投入）':`，累積領息 <b>${fmt(cash)}</b>`)+'<br>＊簡化模型：未計稅、手續費與配股，結果僅供參考。';
+}
+
+loadHoldings();render();
+loadYields().then(render);
+loadUpcoming();
+$('nhi').onchange=render;
+</script>
+</body>
+</html>
