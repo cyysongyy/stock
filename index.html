@@ -397,6 +397,10 @@ select option{background:var(--card2);color:var(--text)}
 .tm-sub{font-size:11px;color:var(--sub)}
 .tm-bar{position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,#00c853,#ffd700 50%,#ff4757);margin:4px 0 2px}
 .tm-bar i{position:absolute;top:-3px;width:4px;height:12px;border-radius:2px;background:#fff;transform:translateX(-2px)}
+.sp-box{margin-top:10px;padding:10px 11px;border-radius:10px;border:1px solid var(--border);background:var(--card)}
+.sp-box.sell{border-color:#00d68f88}.sp-box.trim{border-color:#f5a62388}.sp-box.wait{border-color:#4d9eff55}
+.sp-head{font-size:12px;margin-bottom:4px}
+.sp-best{margin-top:6px;line-height:1.5}
 /* Score Cards */
 .score-section{padding:14px}
 .score-section-title{font-size:12px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
@@ -2534,6 +2538,7 @@ function renderDetailPanel(rd){
       <div class="dp-item"><label>報酬率</label><span style="color:${plPct==null?'var(--text)':plPct>=0?'var(--red)':'var(--green)'}">${plPct==null?'—':(plPct>=0?'+':'')+plPct.toFixed(2)+'%'}</span></div>
     </div>
     ${targetBar}
+    ${sellPlanHTML(h,_hCode(h),curr)}
     ${(()=>{const code=_hCode(h);const plan=curr?buyPlan(code,curr):null;const ts=plan?touchStats(code,curr,plan.steps[0].price):null;
       const body=flowBlockHTML(code)+instBlockHTML(code)+(plan?`<div class="tm-row">🪜 <b>建議買價</b> $${fmtTick(plan.steps[0].price)} <span class="tm-sub">${_escH(plan.steps[0].basis)}</span>${ts?`<div class="tm-sub">⏱ 到價機率 ${touchLine(ts)}</div>`:''}</div>`:'')+sellTargetsHTML(h,code,curr);
       return body?`<div class="dp-flow" onclick="event.stopPropagation()">${body}</div>`:'';})()}
@@ -2678,18 +2683,113 @@ function _hCode(h){return h.code.replace('.TW','').replace('.TWO','');}
 function _escH(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function _livePrice(h){const code=_hCode(h);const pc=priceCache[code]||priceCache[code+'.TW']||priceCache[h.code];return pc?.price??null;}
 function calcUrgency(h,curr){
-  const dc=(typeof dipCache!=='undefined')?dipCache[_hCode(h)]:null;
-  const t=dc&&dc.timing;
+  const code=_hCode(h);
+  const dc=(typeof dipCache!=='undefined')?dipCache[code]:null;
+  const t=liveTiming(code,curr)||(dc&&dc.timing);
   const U=(side,level,label,reason)=>({side,level,label,reason,short:[label.slice(0,2),label.slice(2)]});
   if(curr!=null){
     if(h.stop&&curr<=h.stop)return U('sell',3,'立即賣出',`已跌破停損 $${h.stop}`);
     if(h.target&&curr>=h.target)return U('sell',3,'立即賣出',`已達停利 $${h.target}`);
   }
-  if(t&&t.recentOversold&&t.confirm)return U('buy',3,'立即買入',`跌深後出現${t.confirm}`);
+  const sp=sellPlanOf(h,curr);
+  if(sp&&sp.atZ1){
+    if(sp.deadCross)return U('sell',3,'立即減碼',`已到近月高壓力 $${fmtTick(sp.z1)}，且高檔 KD 死亡交叉`);
+    return U('sell',2,'考慮減碼',`已到近月高壓力 $${fmtTick(sp.z1)}，可先減 1/3`);
+  }
+  if(t&&t.recentOversold&&t.confirm){
+    const w=positionWeight(h,curr);
+    const lossNote=curr!=null&&h.cost&&curr<h.cost?`；目前帳面虧損 ${((curr/h.cost-1)*100).toFixed(1)}%，加碼會拉低均價`:'';
+    return U('buy',3,'立即買入',`跌深後出現${t.confirm}`+(w!=null&&w>=30?`；此股已占總市值 ${w.toFixed(0)}%，加碼前留意集中度`:'')+lossNote);
+  }
   if(curr!=null&&h.stop&&curr<=h.stop*1.03)return U('sell',2,'考慮減碼',`距停損只剩 ${((curr/h.stop-1)*100).toFixed(1)}%`);
   if(t&&t.deadCross)return U('sell',2,'考慮減碼','高檔 KD 死亡交叉，漲勢轉弱');
   if(dc&&((t&&t.oversoldNow>=2)||(dc.metCount||0)>=2))return U('buy',2,'準備買入','跌深但還沒止跌，等反轉訊號');
   return null;
+}
+// ── 盤中即時判斷：dipCache 的日 K 訊號只在分析頁刷新時重算；這裡把「今天」那根 K 棒換成即時價，
+// 讓立即買入／立即減碼跟著每 10 秒的報價走。報價不是今天的、或歷史沒有日期，就沿用 dipCache
+const _liveTimingMemo={};
+function liveTiming(code,curr){
+  const pc=_pcFor(code),H=_histFor(code);
+  if(!curr||!pc||!H||typeof _timingSignals!=='function')return null;
+  const today=new Date().toLocaleDateString('zh-TW');
+  const n=H.close.length,lastTs=H.ts?.[n-1]||0;
+  if(pc.date!==today||!lastTs)return null;
+  const key=n+'|'+lastTs+'|'+curr;
+  if(_liveTimingMemo[code]?.key===key)return _liveTimingMemo[code].t;
+  const candles=H.close.map((c,i)=>({ts:H.ts[i],open:c,high:H.high[i],low:H.low[i],close:c,volume:H.volume[i]}));
+  if(new Date(lastTs*1000).toLocaleDateString('zh-TW')===today){
+    const b=candles[n-1];b.close=curr;b.high=Math.max(b.high,curr);b.low=Math.min(b.low,curr);
+  }else candles.push({ts:Math.floor(Date.now()/1000),open:curr,high:curr,low:curr,close:curr,volume:0});
+  const t=_timingSignals(candles,null,/^00/.test(code)).timing;
+  _liveTimingMemo[code]={key,t};
+  return t;
+}
+function _cardTiming(code,curr,dc){const lt=liveTiming(code,curr);return lt?{...lt,yld:dc?.timing?.yld,bt:dc?.timing?.bt}:dc?.timing;}
+// ── 依我的狀況的賣出時機：扣掉手續費與證交稅後的報酬、打平價、部位占比、近月高／近季高壓力、月線保護 ──
+const _feeBuy=0.001425,_feeSell=0.001425;
+const _taxOf=code=>/^00/.test(code)?0.001:0.003;
+function breakevenPrice(h){return h.cost*(1+_feeBuy)/(1-_feeSell-_taxOf(_hCode(h)));}
+function positionWeight(h,curr){
+  if(!curr)return null;
+  const tot=holdings.reduce((s,x)=>s+(_livePrice(x)??x.cost)*x.qty,0);
+  return tot?curr*h.qty/tot*100:null;
+}
+// 近 n 日最高價（不含今天，今天的高點還在變動）
+function _prevHighN(code,n){
+  const H=_histFor(code);if(!H)return null;
+  const len=H.high.length,w=H.high.slice(Math.max(0,len-1-n),len-1);
+  return w.length>=Math.min(n,10)?Math.max(...w):null;
+}
+function sellPlanOf(h,curr){
+  if(!curr||!h.cost||!h.qty)return null;
+  const code=_hCode(h),be=breakevenPrice(h);
+  const net=(curr*(1-_feeSell-_taxOf(code))/(h.cost*(1+_feeBuy))-1)*100;
+  const t=liveTiming(code,curr)||(typeof dipCache!=='undefined'?dipCache[code]?.timing:null)||null;
+  const w=positionWeight(h,curr),z1=_prevHighN(code,20),z2=_prevHighN(code,60),ma20=_ma20Of(code);
+  const steps=[];
+  const at=(price,label)=>steps.push({price,label,ts:price>curr?touchStats(code,curr,price):null});
+  const brk=net>0&&z1!=null&&curr>z1*1.015;
+  const atZ1=net>0&&z1!=null&&curr>=z1*0.985&&!brk;
+  let tone,headline,best;
+  if(h.stop&&curr<=h.stop){tone='sell';headline='已跌破停損，建議立即出場';best=`停損價 $${h.stop} 已觸發，先出場再檢討。`;}
+  else if(h.target&&curr>=h.target){tone='sell';headline='已達停利，建議落袋';best=`停利價 $${h.target} 已到。若還想續抱，跌破月線再出清。`;}
+  else if(net<=0){
+    tone='wait';headline='目前虧損，先不殺低';
+    best=`扣費後還虧 ${Math.abs(net).toFixed(1)}%。反彈到打平價附近再分批減碼；${h.stop?`跌破停損 $${h.stop} 才出場`:'建議設定停損價保護'}。`;
+  }else if(brk){
+    tone='hold';headline='突破近月高，續抱觀察';
+    best=`突破近月高 $${fmtTick(z1)}，原本的壓力變成支撐。跌回 $${fmtTick(z1)} 下方就減碼 1/3；停利價${h.target?' $'+h.target:'未設'} 是最後目標。`;
+  }else if(atZ1){
+    tone=t?.deadCross?'sell':'trim';
+    headline=t?.deadCross?'高檔轉弱，建議減碼':'已到壓力區，可先減碼';
+    best=`第 1 批（約 1/3）可在這裡出；剩下的以${h.target?'停利價':'近季高'}為目標，跌破月線就全出。`;
+  }else{
+    tone='hold';headline='獲利中，等壓力區再減碼';
+    best=`扣費後賺 ${net.toFixed(1)}%。接近近月高 $${z1!=null?fmtTick(z1):'—'} 時分批出；跌破月線${ma20?' $'+fmtTick(ma20):''} 就不要再等。`;
+  }
+  if(net>0){
+    if(z1!=null&&z1>curr*1.002)at(z1,'近月高壓力');
+    if(z2!=null&&z2>curr*1.002&&(z1==null||z2>z1*1.002))at(z2,'近季高壓力');
+    if(h.target&&h.target>curr)at(h.target,'停利價');
+    if(ma20)steps.push({price:ma20,label:'跌破月線全出（保護價）',protect:true});
+  }else at(be,'打平價（含費用）');
+  if(h.stop&&h.stop<curr)steps.push({price:h.stop,label:'停損價（跌破就出場）',protect:true});
+  steps.sort((a,b)=>(!!a.protect-!!b.protect)||a.price-b.price);
+  const concentrated=w!=null&&w>=30;
+  if(concentrated&&net>0)best+=` 此股占總市值 ${w.toFixed(0)}%，集中度偏高，第 1 批可改為 1/2。`;
+  return{net,be,w,tone,headline,best,steps,z1,atZ1,deadCross:!!t?.deadCross,concentrated};
+}
+function sellPlanHTML(h,code,curr){
+  const p=sellPlanOf(h,curr);if(!p)return'';
+  let n=0;
+  const rows=p.steps.map(s=>{
+    const lab=s.protect?'🛡️':`第 ${++n} 批`;
+    return`<div class="tm-row">${lab} <b>$${fmtTick(s.price)}</b> <span class="tm-sub">${_escH(s.label)}${s.ts?`・到價機率 10 日 ${_pct(s.ts.p10)}`:''}</span></div>`;
+  }).join('');
+  return`<div class="sp-box ${p.tone}"><div class="sp-head">🎯 我的賣出時機：<b>${_escH(p.headline)}</b></div>
+    <div class="tm-sub">扣掉手續費與證交稅，現在賣報酬 ${p.net>=0?'+':''}${p.net.toFixed(1)}%；打平價 $${fmtTick(p.be)}</div>${rows}
+    <div class="tm-sub sp-best">${_escH(p.best)}</div></div>`;
 }
 // 台股升降單位（ETF 另有規則），建議價要是真的掛得出去的價格
 function twTickDown(p,isETF){
@@ -3034,8 +3134,9 @@ function urgencyCardHTML(h){
         <div style="font-size:15px;font-weight:700">${curr!=null?'$'+curr.toFixed(2):'—'} ${chg}</div>
       </div>
       ${banner}${flowBlockHTML(code)}${instBlockHTML(code)}${met}${sellInfo}
-      ${timingBlockHTML(dc?.timing,u?.side==='sell',curr,code)}
+      ${timingBlockHTML(_cardTiming(code,curr,dc),u?.side==='sell',curr,code)}
       ${sellTargetsHTML(h,code,curr)}
+      ${sellPlanHTML(h,code,curr)}
       <button onclick="closeModal('modal-urgency');openKlineFor('${code}')" style="margin-top:10px;width:100%;padding:9px;border-radius:9px;border:none;background:${u&&u.level===3?col:'var(--blue)'};color:${u&&u.side==='buy'&&u.level===3?'#04210f':'#fff'};font-size:13px;font-weight:700;cursor:pointer">📈 看 K 線</button>
     </div>`;
 }
