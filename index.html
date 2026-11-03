@@ -568,6 +568,7 @@ select option{background:var(--card2);color:var(--text)}
   <!-- Portfolio -->
   <div id="sec-portfolio" class="section active">
     <div id="usp-wrap"></div>
+    <div id="day-pred-wrap"></div>
     <div id="overview-wrap"></div>
     <div id="holdings-wrap"></div>
   </div>
@@ -1613,6 +1614,7 @@ function showApp(name){
   renderPortfolio(); // instant render with cached prices
   fetchLiveAndRender(); // background fetch
   loadUSPredict(); // 美股前日收盤 → 台股預測
+  loadDayPredict(); // 今日台股預測（規則式，與 cli/predict.mjs 相同算法）
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
   startLiveLoop();
   updateVoicePill();
@@ -1840,7 +1842,7 @@ function checkSignalAlert(h,sigs,curr){
   const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&monitorOn){if(Date.now()>=nextRefreshAt)runMonitorCycle().then(scheduleNext);}});
 // 回到 App／喚醒畫面時，自動更新「美股收盤→台股預測」（30分鐘內用快取，不重複抓）
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')loadUSPredict();});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){loadUSPredict();loadDayPredict();}});
 window.addEventListener('pageshow',e=>{if(e.persisted)loadUSPredict();});
 
 // ── Tabs ──────────────────────────────────────────────────────
@@ -2102,6 +2104,107 @@ async function fetchOpenAPIPrices(codes){
   });
   return prices;
 }
+// ── 今日台股預測（首頁）：與 cli/predict.mjs 相同的規則式算法 ──────────────
+// 美股加權（費半 40%／那指 25%／S&P 20%／道瓊 15%）占 60%，亞股平均占 30%；
+// 區間寬度取加權指數近 10 日報酬的標準差（至少 ±0.5%）。未經回測校準
+const DP_KEY='tw_day_pred_v1';
+const DP_US=[['^SOX',0.4],['^IXIC',0.25],['^GSPC',0.2],['^DJI',0.15]];
+const DP_ASIA=['^N225','^KS11','^HSI'];
+const DP_DAY=864e5;
+let _dpBusy=false;
+async function dpFetchSeries(sym){
+  const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=1mo&includePrePost=false';
+  let j=null;
+  try{j=await fetchUSJson('https://query1.finance.yahoo.com'+q);}
+  catch(e){j=await fetchUSJson('https://query2.finance.yahoo.com'+q);}
+  const res=j.chart?.result?.[0];
+  const ts=res?.timestamp||[],close=res?.indicators?.quote?.[0]?.close||[];
+  const bars=ts.map((t,i)=>({d:new Date(t*1000).toISOString().slice(0,10),c:close[i]})).filter(b=>b.c!=null);
+  if(bars.length<3)throw new Error(sym+' 無資料');
+  const rets=bars.slice(1).map((b,i)=>(b.c-bars[i].c)/bars[i].c*100);
+  return{chg:rets[rets.length-1],date:bars[bars.length-1].d,rets};
+}
+function dpTaipei(){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false}).formatToParts(new Date()).map(x=>[x.type,x.value]));
+  return{date:`${p.year}-${p.month}-${p.day}`,hour:Number(p.hour)%24};
+}
+// 09:00 前預測當天，之後預測下一個平日（未排除國定假日）
+function dpTarget(now){
+  let d=new Date(now.date+'T00:00:00Z');
+  if(now.hour>=9)d=new Date(d.getTime()+DP_DAY);
+  while([0,6].includes(d.getUTCDay()))d=new Date(d.getTime()+DP_DAY);
+  return d.toISOString().slice(0,10);
+}
+function dpWMean(items){
+  const ok=items.filter(i=>i.v!=null);
+  if(!ok.length)return null;
+  return ok.reduce((s,i)=>s+i.v*i.w,0)/ok.reduce((s,i)=>s+i.w,0);
+}
+function dpStdev(xs){const m=xs.reduce((a,b)=>a+b,0)/xs.length;return Math.sqrt(xs.reduce((a,b)=>a+(b-m)**2,0)/xs.length);}
+function dpForecast(d){
+  const us=dpWMean(DP_US.map(([s,w])=>({v:d[s]?.chg,w})));
+  if(us==null)return null;
+  const asia=dpWMean(DP_ASIA.map(s=>({v:d[s]?.chg,w:1})));
+  const expected=dpWMean([{v:us,w:0.6},{v:asia,w:0.3}]);
+  const tr=d['^TWII']?.rets?.slice(-10)||[];
+  const band=Math.max(0.5,tr.length>2?dpStdev(tr):1);
+  const vix=d['^VIX']?.chg;
+  const direction=expected>0.3?'偏多':expected<-0.3?'偏空':'中性';
+  return{us,asia,expected,low:expected-band,high:expected+band,direction,vixAlert:vix!=null&&vix>5?vix:null};
+}
+function dpLabel(date){
+  const wd=new Intl.DateTimeFormat('zh-TW',{timeZone:'UTC',weekday:'narrow'}).format(new Date(date+'T00:00:00Z'));
+  return `${Number(date.slice(5,7))}/${Number(date.slice(8,10))}（${wd}）`;
+}
+async function loadDayPredict(force){
+  const wrap=document.getElementById('day-pred-wrap');
+  if(!wrap||_dpBusy)return;
+  let cache=null;
+  try{cache=JSON.parse(localStorage.getItem(DP_KEY)||'null');}catch(e){}
+  const target=dpTarget(dpTaipei());
+  if(cache&&!force&&cache.target===target&&Date.now()-cache.at<30*60*1000){renderDayPredict(cache);return;}
+  if(cache&&cache.target===target)renderDayPredict(cache,true);
+  else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🧭 今日台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">計算中…</div></div>';
+  _dpBusy=true;
+  try{
+    const syms=[...DP_US.map(x=>x[0]),...DP_ASIA,'^TWII','^VIX'];
+    const d={};
+    for(const s of syms){try{d[s]=await dpFetchSeries(s);}catch(e){}}
+    const fc=dpForecast(d);
+    if(!fc){
+      if(cache)renderDayPredict(cache,false,true);
+      else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🧭 今日台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadDayPredict(true)">重試</span></div></div>';
+      return;
+    }
+    const data={at:Date.now(),target,fc,missing:syms.filter(s=>!d[s]),taiex:d['^TWII']?{chg:d['^TWII'].chg,date:d['^TWII'].date}:null};
+    localStorage.setItem(DP_KEY,JSON.stringify(data));
+    renderDayPredict(data);
+  }finally{_dpBusy=false;}
+}
+function renderDayPredict(c,updating,stale){
+  const wrap=document.getElementById('day-pred-wrap');
+  if(!wrap)return;
+  const badge=updating?' <span style="color:var(--sub)">更新中…</span>':stale?' <span style="color:#f59e0b">快取</span>':'';
+  const head=`<div class="usp-head"><div class="usp-title">🧭 今日台股預測</div><div class="usp-date">${dpLabel(c.target)}${badge} <span style="cursor:pointer" onclick="loadDayPredict(true)" title="重新整理">↻</span></div></div>`;
+  const f=c.fc;
+  if(!f){wrap.innerHTML=`<div class="usp-card">${head}</div>`;return;}
+  const cls=f.direction==='偏多'?'usp-up':f.direction==='偏空'?'usp-dn':'usp-flat';
+  const emo=f.direction==='偏多'?'📈':f.direction==='偏空'?'📉':'➖';
+  const sg=v=>v==null?'—':(v>0?'+':'')+v.toFixed(2)+'%';
+  wrap.innerHTML=`<div class="usp-card">${head}
+    <div class="usp-verdict"><div class="txt ${cls}">${emo} ${f.direction}</div><div class="sub">預期 ${sg(f.expected)}</div></div>
+    <div style="font-size:11px;color:var(--sub);margin-top:4px">開盤區間 ${sg(f.low)} ～ ${sg(f.high)}</div>
+    <div class="usp-idx-row" style="margin-top:8px">
+      <div class="usp-idx"><div class="nm">美股加權</div><div class="chg">${sg(f.us)}</div></div>
+      <div class="usp-idx"><div class="nm">亞股平均</div><div class="chg">${sg(f.asia)}</div></div>
+      <div class="usp-idx"><div class="nm">加權指數</div><div class="chg">${c.taiex?sg(c.taiex.chg):'—'}</div></div>
+    </div>
+    ${f.vixAlert!=null?`<div style="font-size:11px;color:#f59e0b">⚠️ VIX 大漲 ${sg(f.vixAlert)}，市場風險偏好下降</div>`:''}
+    ${c.missing&&c.missing.length?`<div class="usp-note">缺少資料：${c.missing.join('、')}，已依其餘資料估算。</div>`:''}
+    <div class="usp-note">規則式估算，未經回測校準，僅供參考，非投資建議。</div>
+  </div>`;
+}
+
 // ── TWSE MIS API — no proxy needed, works on iPhone ────────
 // Batch fetch current prices for multiple codes
 // TWSE MIS is known to silently truncate/omit entries when a single request
