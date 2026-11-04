@@ -1910,31 +1910,72 @@ const USP_PROXIES=[
   u=>'https://corsproxy.io/?'+encodeURIComponent(u),
   u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
 ];
-// 幾個代理同時問，第一個回有效資料的就用（以前一個一個試，每個失敗都要等 10 秒）
-function fetchUSJson(url){
+// 對沖請求：先送第一個代理，2.5 秒還沒有有效資料就補送下一個，先回來的勝出，其餘中止。
+// 以前四個代理同時送，每檔要發 4 個請求，免費代理很容易限流，也比較慢
+function fetchHedged(url,mks,hedgeMs=2500,timeoutMs=10000){
   return new Promise((resolve,reject)=>{
-    let left=USP_PROXIES.length;
-    USP_PROXIES.forEach(mk=>{
-      fetchT(mk(url),10000).then(r=>r.ok?r.text():'').then(t=>{
+    const ctrls=[];let next=0,failed=0,done=false;
+    const launch=()=>{
+      if(done||next>=mks.length)return;
+      const ac=new AbortController();ctrls.push(ac);
+      const tid=setTimeout(()=>ac.abort(),timeoutMs);
+      fetch(mks[next++](url),{signal:ac.signal}).then(r=>r.ok?r.text():'').then(t=>{
+        clearTimeout(tid);
         const j=JSON.parse(t);
-        if(j&&j.chart&&j.chart.result&&j.chart.result[0])resolve(j); // 驗證內容有效才採用
-        else throw new Error('empty');
-      }).catch(()=>{if(--left===0)reject(new Error('US fetch failed'));});
-    });
+        if(j&&j.chart&&j.chart.result&&j.chart.result[0]&&!done){
+          done=true;ctrls.forEach(c=>{if(c!==ac)c.abort();});resolve(j);
+        }else throw new Error('empty');
+      }).catch(()=>{clearTimeout(tid);if(!done&&++failed===mks.length)reject(new Error('US fetch failed'));else launch();});
+    };
+    launch();
+    for(let i=1;i<mks.length;i++)setTimeout(launch,hedgeMs*i);
   });
 }
-async function fetchUSIndex(sym){
-  const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=10d&includePrePost=false';
+function fetchUSJson(url){return fetchHedged(url,USP_PROXIES);}
+// 同時最多 limit 個，依序回傳結果（避免一次打太多請求）
+async function mapLimit(items,limit,fn){
+  const out=new Array(items.length);let i=0;
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{
+    while(i<items.length){const k=i++;out[k]=await fn(items[k]);}
+  }));
+  return out;
+}
+// 市場收盤資料：美股卡與今日預測卡共用，同一檔只抓一次；成功的快取 30 分鐘，失敗不快取
+const MKT_KEY='tw_mkt_series_v1',MKT_TTL=30*60*1000;
+let _mktMem=null;
+const _mktInflight={};
+function _mktCache(){
+  if(!_mktMem){try{_mktMem=JSON.parse(localStorage.getItem(MKT_KEY)||'{}');}catch(e){_mktMem={};}}
+  return _mktMem;
+}
+async function mktFetch(sym){
+  const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=1mo&includePrePost=false';
   let j=null;
   try{j=await fetchUSJson('https://query1.finance.yahoo.com'+q);}
   catch(e){j=await fetchUSJson('https://query2.finance.yahoo.com'+q);}
   const res=j.chart?.result?.[0];
-  const closes=(res?.indicators?.quote?.[0]?.close||[]).filter(v=>v!=null);
-  if(closes.length<2)throw new Error(sym+' 無資料');
-  const ts=res.timestamp||[];
-  const last=closes[closes.length-1],prev=closes[closes.length-2];
-  const lastDate=ts.length?new Date(ts[ts.length-1]*1000):new Date();
-  return{chg:(last-prev)/prev*100,close:last,dateStr:lastDate.toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})};
+  const ts=res?.timestamp||[],close=res?.indicators?.quote?.[0]?.close||[];
+  const bars=ts.map((t,i)=>({ts:t,c:close[i]})).filter(b=>b.c!=null);
+  if(bars.length<3)throw new Error(sym+' 無資料');
+  const rets=bars.slice(1).map((b,i)=>(b.c-bars[i].c)/bars[i].c*100);
+  const last=bars[bars.length-1];
+  return{chg:rets[rets.length-1],last:last.c,ts:last.ts,date:new Date(last.ts*1000).toISOString().slice(0,10),rets};
+}
+function mktSeries(sym){
+  const hit=_mktCache()[sym];
+  if(hit&&Date.now()-hit.at<MKT_TTL)return Promise.resolve(hit.data);
+  if(!_mktInflight[sym]){
+    _mktInflight[sym]=mktFetch(sym).then(data=>{
+      _mktCache()[sym]={at:Date.now(),data};
+      try{localStorage.setItem(MKT_KEY,JSON.stringify(_mktMem));}catch(e){}
+      return data;
+    }).finally(()=>{delete _mktInflight[sym];});
+  }
+  return _mktInflight[sym];
+}
+async function fetchUSIndex(sym){
+  const s=await mktSeries(sym);
+  return{chg:s.chg,close:s.last,dateStr:new Date(s.ts*1000).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})};
 }
 function uspVerdict(score){
   if(score>=1.2) return{txt:'強勢偏多',emo:'🔥',cls:'usp-up',  desc:'美股大漲，台股開高機率高'};
@@ -2016,12 +2057,11 @@ async function loadUSPredict(force){
   if(cache)renderUSPredict(cache.data,true); // 先顯示舊資料(標示更新中)再背景更新
   else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
   try{
-    // 依序抓：四個指數同時打免費代理很容易被限流，結果常常只抓到一個
-    const results=[];
-    for(const ix of USP_INDICES){
-      try{results.push(Object.assign({},ix,await fetchUSIndex(ix.sym)));}
-      catch(e){results.push(Object.assign({},ix,{chg:null}));}
-    }
+    // 最多三個指數同時抓（與今日預測卡共用快取，不會重複打代理）
+    const results=await mapLimit(USP_INDICES,3,async ix=>{
+      try{return Object.assign({},ix,await fetchUSIndex(ix.sym));}
+      catch(e){return Object.assign({},ix,{chg:null});}
+    });
     const fresh=results.filter(r=>r.chg!=null);
     if(!fresh.length)throw new Error('無法取得美股資料');
     const dateStr=fresh[0].dateStr;
@@ -2112,18 +2152,6 @@ const DP_US=[['^SOX',0.4],['^IXIC',0.25],['^GSPC',0.2],['^DJI',0.15]];
 const DP_ASIA=['^N225','^KS11','^HSI'];
 const DP_DAY=864e5;
 let _dpBusy=false;
-async function dpFetchSeries(sym){
-  const q='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=1mo&includePrePost=false';
-  let j=null;
-  try{j=await fetchUSJson('https://query1.finance.yahoo.com'+q);}
-  catch(e){j=await fetchUSJson('https://query2.finance.yahoo.com'+q);}
-  const res=j.chart?.result?.[0];
-  const ts=res?.timestamp||[],close=res?.indicators?.quote?.[0]?.close||[];
-  const bars=ts.map((t,i)=>({d:new Date(t*1000).toISOString().slice(0,10),c:close[i]})).filter(b=>b.c!=null);
-  if(bars.length<3)throw new Error(sym+' 無資料');
-  const rets=bars.slice(1).map((b,i)=>(b.c-bars[i].c)/bars[i].c*100);
-  return{chg:rets[rets.length-1],date:bars[bars.length-1].d,rets};
-}
 function dpTaipei(){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hour12:false}).formatToParts(new Date()).map(x=>[x.type,x.value]));
   return{date:`${p.year}-${p.month}-${p.day}`,hour:Number(p.hour)%24};
@@ -2169,7 +2197,7 @@ async function loadDayPredict(force){
   try{
     const syms=[...DP_US.map(x=>x[0]),...DP_ASIA,'^TWII','^VIX'];
     const d={};
-    for(const s of syms){try{d[s]=await dpFetchSeries(s);}catch(e){}}
+    await mapLimit(syms,3,async s=>{try{d[s]=await mktSeries(s);}catch(e){}});
     const fc=dpForecast(d);
     if(!fc){
       if(cache)renderDayPredict(cache,false,true);
