@@ -1971,6 +1971,7 @@ function expectedUSClose(){
   return d.toISOString().slice(0,10);
 }
 function isoMD(iso){return (+iso.slice(5,7))+'/'+(+iso.slice(8,10));}
+function fmtHM(ms){return new Date(ms).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false});}
 function mktSeries(sym){
   const hit=_mktCache()[sym];
   // 收盤日落後於應有的交易日：快取不能用，但同一檔最多每 10 分鐘重抓一次
@@ -2092,7 +2093,7 @@ async function loadUSPredict(force){
     const score=valid.reduce((s,r)=>s+r.chg*r.w,0)/wSum;
     const missing=results.filter(r=>r.chg==null).map(r=>r.nm);
     const date=fresh.map(r=>r.date).filter(Boolean).sort().pop()||null;
-    const data={score,dateStr,date,indices:results.map(r=>({nm:r.nm,chg:r.chg})),missing,coverage:wSum};
+    const data={score,dateStr,date,fetchedAt:Date.now(),indices:results.map(r=>({nm:r.nm,chg:r.chg})),missing,coverage:wSum};
     localStorage.setItem(USP_KEY,JSON.stringify({at:Date.now(),data}));
     renderUSPredict(data);
     const staleNow=!!date&&date<expectedUSClose();
@@ -2117,7 +2118,7 @@ function renderUSPredict(d,updating,stale){
     return '<div class="usp-idx"><div class="nm">'+ix.nm+'</div><div class="chg '+c+'">'+t+'</div></div>';
   }).join('');
   wrap.innerHTML='<div class="usp-card">'
-    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+badge+(late?' <span style="color:#f59e0b">尚未更新</span>':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
+    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+(d.fetchedAt?'・抓取 '+fmtHM(d.fetchedAt):'')+badge+(late?' <span style="color:#f59e0b">尚未更新</span>':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
     +'<div class="usp-idx-row">'+cells+'</div>'
     +'<div class="usp-gauge"><div class="usp-marker" style="left:calc('+pos+'% - 1px)"></div></div>'
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
@@ -2236,7 +2237,7 @@ function renderDayPredict(c,updating,stale){
   const wrap=document.getElementById('day-pred-wrap');
   if(!wrap)return;
   const badge=updating?' <span style="color:var(--sub)">更新中…</span>':stale?' <span style="color:#f59e0b">快取</span>':'';
-  const head=`<div class="usp-head"><div class="usp-title">🧭 今日台股預測</div><div class="usp-date">${dpLabel(c.target)}${badge} <span style="cursor:pointer" onclick="loadDayPredict(true)" title="重新整理">↻</span></div></div>`;
+  const head=`<div class="usp-head"><div class="usp-title">🧭 今日台股預測</div><div class="usp-date">${dpLabel(c.target)}${c.at?'・抓取 '+fmtHM(c.at):''}${badge} <span style="cursor:pointer" onclick="loadDayPredict(true)" title="重新整理">↻</span></div></div>`;
   const f=c.fc;
   if(!f){wrap.innerHTML=`<div class="usp-card">${head}</div>`;return;}
   const cls=f.direction==='偏多'?'usp-up':f.direction==='偏空'?'usp-dn':'usp-flat';
