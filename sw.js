@@ -1,5 +1,5 @@
 /* 台股 Dashboard Service Worker — App Shell 快取，離線可開啟 */
-const CACHE = 'twdash-v4';
+const CACHE = 'twdash-v5';
 const SHELL = [
   './',
   './index.html',
