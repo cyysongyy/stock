@@ -101,6 +101,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .usp-verdict .txt{font-size:14px;font-weight:800}
 .usp-verdict .sub{font-size:10px;color:var(--sub)}
 .usp-note{font-size:9px;color:var(--sub);margin-top:8px;line-height:1.5}
+/* 風險預警卡 */
+.rk-c1{border-color:#f5a62366}.rk-c2{border-color:#ff8c4288}.rk-c3{border-color:#ff4757aa}
+.rk-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
+.rk-lv0{background:#7a86a022;color:var(--sub)}.rk-lv1{background:#f5a62322;color:#f5a623}.rk-lv2{background:#ff8c4222;color:#ff8c42}.rk-lv3{background:#ff475733;color:#ff4757}.rk-lvx{background:#f5a62322;color:var(--amber)}
+.rk-bar{position:relative;height:8px;border-radius:4px;background:var(--card3);margin:8px 2px 6px}
+.rk-fill{height:100%;border-radius:4px}
+.rk-fill.rk-lv0{background:#7a86a0}.rk-fill.rk-lv1{background:#f5a623}.rk-fill.rk-lv2{background:#ff8c42}.rk-fill.rk-lv3{background:#ff4757}
+.rk-bar i{position:absolute;top:-2px;width:2px;height:12px;background:var(--border)}
+.rk-score{font-size:12px;margin-bottom:6px}.rk-score b{font-size:20px}
+.rk-row{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:4px 0;border-top:1px solid #2a2f4522}
+.rk-row a{color:var(--blue);text-decoration:none;white-space:nowrap}
+.rk-sec{font-size:10px;color:var(--sub);margin-top:8px;font-weight:700}
+.rk-ok{font-size:11px;color:var(--sub);padding:6px 0}
 .usp-up{color:var(--red)}.usp-dn{color:var(--green)}.usp-flat{color:var(--sub)}
 .usp-hrow{display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 0;border-top:1px solid var(--border)22}
 
@@ -567,6 +580,7 @@ select option{background:var(--card2);color:var(--text)}
 
   <!-- Portfolio -->
   <div id="sec-portfolio" class="section active">
+    <div id="risk-wrap"></div>
     <div id="usp-wrap"></div>
     <div id="day-pred-wrap"></div>
     <div id="overview-wrap"></div>
@@ -1615,6 +1629,8 @@ function showApp(name){
   fetchLiveAndRender(); // background fetch
   loadUSPredict(); // 美股前日收盤 → 台股預測
   loadDayPredict(); // 今日台股預測（規則式，與 cli/predict.mjs 相同算法）
+  loadRisk(); // 風險預警（伺服器端排程發佈的 risk-state.json）
+  if(!window._riskTimer)window._riskTimer=setInterval(()=>{if(document.visibilityState==='visible')loadRisk();},5*60e3);
   if(hasSheet())syncFromSheet(); // sync from Google Sheet
   startLiveLoop();
   updateVoicePill();
@@ -1842,7 +1858,7 @@ function checkSignalAlert(h,sigs,curr){
   const labels={rsi_oversold:'RSI超賣，買入機會 📈',rsi_overbought:'RSI超買，考慮賣出 📉',macd_bull:'MACD黃金交叉，買入訊號 📈',macd_bear:'MACD死亡交叉，賣出訊號 📉',ma_bull:'突破MA20，多頭格局 📈',ma_bear:'跌破MA20，注意支撐 ⚠️'};const match={rsi_oversold:'rsi_oversold',rsi_overbought:'rsi_overbought',macd_bull:'macd_bull',macd_bear:'macd_bear',ma_bull:'ma_bull',ma_bear:'ma_bear'};if(sigs.some(s=>s.key===match[h.signalAlert]))return labels[h.signalAlert];return null;}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&monitorOn){if(Date.now()>=nextRefreshAt)runMonitorCycle().then(scheduleNext);}});
 // 回到 App／喚醒畫面時，自動更新「美股收盤→台股預測」（30分鐘內用快取，不重複抓）
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){loadUSPredict();loadDayPredict();}});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){loadUSPredict();loadDayPredict();loadRisk();}});
 window.addEventListener('pageshow',e=>{if(e.persisted)loadUSPredict();});
 
 // ── Tabs ──────────────────────────────────────────────────────
@@ -2257,6 +2273,106 @@ async function fetchOpenAPIPrices(codes){
   });
   return prices;
 }
+// ── 風險預警卡 ─────────────────────────────────────────────
+// 資料由伺服器端排程（GitHub Actions：.github/workflows/risk-monitor.yml）蒐集、評分後發佈到 data 分支，
+// 這裡只負責讀取與顯示（不經過 CORS 代理）。受影響的持股在手機本機比對，持股資料不會上傳。
+const RISK_URL='https://raw.githubusercontent.com/cyysongyy/stock/data/risk-state.json';
+const RISK_KEY='tw_risk_cache_v1',RISK_SEEN='tw_risk_seen_v1';
+const RISK_ACTION=['目前沒有明顯的風險訊號。','留意盤勢，暫緩加碼，確認每檔持股都有設定停損價。','考慮降低風險部位、收緊停損，避免追價與加碼。','優先控管風險：評估減碼或執行停損，避免融資加碼。'];
+let _riskBusy=false;
+const _safeUrl=u=>/^https:\/\//.test(u||'')?_escH(u):'';
+function riskMatch(h,rules){
+  const code=_hCode(h),name=_klName(h,code)||h.name||'';
+  const hits=(rules||[]).filter(r=>!r.default&&((r.codes||[]).includes(code)||(r.nameRegex&&new RegExp(r.nameRegex,'i').test(name))));
+  return hits.length?hits:(rules||[]).filter(r=>r.default);
+}
+function riskAffected(d){
+  const out=[];
+  for(const h of holdings){
+    const seen=new Map();
+    for(const r of riskMatch(h,d.exposure))for(const tok of r.factors||[]){
+      const t=(d.triggered||[]).find(x=>x.id===tok||x.symbol===tok);
+      if(t)seen.set(t.id,t);
+    }
+    if(seen.size){const code=_hCode(h);out.push({code,name:_klName(h,code),factors:[...seen.values()]});}
+  }
+  return out;
+}
+// 排程只在「台北週一至週五 21:00 到隔天 10:00」前後執行，其他時段資料本來就不會更新
+function riskActiveNow(){
+  const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',weekday:'short',hour:'2-digit',hour12:false}).formatToParts(new Date()).map(x=>[x.type,x.value]));
+  const h=Number(p.hour)%24;
+  if(h>=21)return['Mon','Tue','Wed','Thu','Fri'].includes(p.weekday);
+  if(h<10)return['Mon','Tue','Wed','Thu','Fri','Sat'].includes(p.weekday);
+  return false;
+}
+async function loadRisk(force){
+  const wrap=document.getElementById('risk-wrap');
+  if(!wrap||_riskBusy)return;
+  let cache=null;try{cache=JSON.parse(localStorage.getItem(RISK_KEY)||'null');}catch(e){}
+  if(cache&&!force&&Date.now()-cache.at<4*60e3){renderRisk(cache.data);return;}
+  if(cache)renderRisk(cache.data,true);
+  _riskBusy=true;
+  try{
+    const r=await fetchT(RISK_URL+'?t='+Math.floor(Date.now()/3e5),10000);
+    if(r.status===404){
+      if(cache)renderRisk(cache.data,false,'伺服器端還沒有新資料');
+      else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🛡️ 風險預警</div><div style="font-size:11px;color:var(--sub);padding:8px 0;line-height:1.6">尚未啟用伺服器端預警。到 GitHub → Actions → <b>Risk Monitor</b> → Run workflow 手動執行一次即可（詳見 README）。 <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重新檢查</span></div></div>';
+      return;
+    }
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    if(!data||data.version!==1||typeof data.score!=='number'||!data.asOf)throw new Error('資料格式不符');
+    localStorage.setItem(RISK_KEY,JSON.stringify({at:Date.now(),data}));
+    renderRisk(data);
+    riskNotify(data);
+  }catch(e){
+    if(cache)renderRisk(cache.data,false,'更新失敗：'+e.message);
+    else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🛡️ 風險預警</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得預警資料（'+_escH(e.message)+'） <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重試</span></div></div>';
+  }finally{_riskBusy=false;}
+}
+function renderRisk(d,updating,note){
+  const wrap=document.getElementById('risk-wrap');if(!wrap)return;
+  const age=Math.max(0,Math.round((Date.now()-Date.parse(d.asOf))/60000));
+  const ageTxt=age<60?age+' 分鐘前':age<1440?Math.round(age/60)+' 小時前':Math.round(age/1440)+' 天前';
+  const stale=age>(d.staleAfterMinutes||120),ok=d.status==='ok',lvl=ok?d.level.rank:0;
+  const sg=v=>(v>0?'+':'')+v.toFixed(2)+'%';
+  const val=t=>t.metric==='last'?t.value.toFixed(1):sg(t.value);
+  const badge=ok?`<span class="rk-badge rk-lv${lvl}">${_escH(d.level.label)}</span>`:'<span class="rk-badge rk-lvx">資料異常</span>';
+  const marks=(d.thresholds||[]).map(t=>`<i style="left:${t.minScore}%" title="${_escH(t.label)} ≥ ${t.minScore}"></i>`).join('');
+  const trig=(d.triggered||[]).slice(0,5).map(t=>`<div class="rk-row"><span><b>${_escH(t.name)}</b> ${val(t)}｜${_escH(t.label)}</span>${_safeUrl(t.link)?`<a href="${_safeUrl(t.link)}" target="_blank" rel="noopener noreferrer" title="${_escH(t.why||'')}">行情↗</a>`:''}</div>`).join('');
+  const aff=ok&&lvl>=1?riskAffected(d).slice(0,4).map(a=>`<div class="rk-row"><span>${_escH(a.name||a.code)} <span class="tm-sub">${_escH(a.code)}</span></span><span class="tm-sub">${a.factors.slice(0,2).map(f=>_escH(f.name)).join('、')}</span></div>`).join(''):'';
+  const tx=d.taiex;
+  const links=(d.links||[]).filter(l=>_safeUrl(l.url)).map(l=>`<a href="${_safeUrl(l.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue);text-decoration:none">${_escH(l.label)}↗</a>`).join('　');
+  const when=riskActiveNow()?'⚠️ 資料偏舊，排程可能沒有執行':'排程休息中（台北週一至週五 21:00 到隔天 10:00 才會更新）';
+  wrap.innerHTML=`<div class="usp-card rk-c${lvl}">
+    <div class="usp-head"><div class="usp-title">🛡️ 風險預警${badge}</div><div class="usp-date">${fmtHM(Date.parse(d.asOf))}${updating?' · 更新中…':''} <span style="cursor:pointer" onclick="loadRisk(true)" title="重新整理">↻</span></div></div>
+    ${ok?`<div class="rk-bar"><div class="rk-fill rk-lv${lvl}" style="width:${Math.min(100,d.score)}%"></div>${marks}</div>
+      <div class="rk-score"><b>${d.score}</b>/100　<span class="tm-sub">${_escH(RISK_ACTION[lvl])}</span></div>`
+      :`<div style="font-size:11px;color:var(--amber);padding:6px 0;line-height:1.6">預警資料來源異常（可用資料 ${Math.round((d.coverage||0)*100)}%），已暫停評分以免誤報。${d.lastOkAt?'上次正常：'+fmtHM(Date.parse(d.lastOkAt)):''}</div>`}
+    ${trig||(ok?'<div class="rk-ok">✓ 目前沒有觸發預警規則</div>':'')}
+    ${ok&&tx?`<div class="rk-sec">預估台股開盤</div><div class="rk-row"><span>${sg(tx.expected)}</span><span class="tm-sub">區間 ${sg(tx.low)} ～ ${sg(tx.high)}</span></div>`:''}
+    ${aff?`<div class="rk-sec">可能受影響的持股（依本機持股比對）</div>${aff}`:''}
+    ${links?`<div class="rk-sec">對外連結</div><div style="font-size:11px;margin-top:3px">${links}</div>`:''}
+    <div class="usp-note">資料時間 ${fmtHM(Date.parse(d.asOf))}（${ageTxt}）${stale?'・'+when:''}${note?'・'+_escH(note):''}<br>${_escH(d.disclaimer||'預警依規則推估，僅供參考，非投資建議。')}</div>
+  </div>`;
+}
+// 等級升到「警戒」以上才跳提示與語音；同一個等級不重複提醒，回到正常就重置
+function riskNotify(d){
+  if(d.status!=='ok')return;
+  const rank=d.level.rank,age=(Date.now()-Date.parse(d.asOf))/60000;
+  let seen={};try{seen=JSON.parse(localStorage.getItem(RISK_SEEN)||'{}');}catch(e){}
+  const last=seen.rank||0;
+  if(rank<2){if(last)localStorage.setItem(RISK_SEEN,JSON.stringify({rank:0}));return;}
+  if(rank>last&&age<=(d.staleAfterMinutes||120)){
+    const msg=`風險預警：${d.level.label}（${d.score} 分）`;
+    showToast('🚨 '+msg,6000);
+    try{if(navigator.vibrate)navigator.vibrate([200,100,200]);}catch(e){}
+    if(voiceOn())speak(msg+'。'+(d.triggered||[]).slice(0,3).map(t=>t.name+t.label).join('，'));
+  }
+  localStorage.setItem(RISK_SEEN,JSON.stringify({rank:Math.max(rank,last)}));
+}
+
 // ── 今日台股預測（首頁）：與 cli/predict.mjs 相同的規則式算法 ──────────────
 // 美股加權（費半 40%／那指 25%／S&P 20%／道瓊 15%）占 60%，亞股平均占 30%；
 // 區間寬度取加權指數近 10 日報酬的標準差（至少 ±0.5%）。未經回測校準

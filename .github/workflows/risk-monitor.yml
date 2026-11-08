@@ -1,0 +1,77 @@
+name: Risk Monitor
+
+# 蒐集華爾街／亞股／總體風險指標，依 config/risk-alerts.json 評分，
+# 發佈到 data 分支的 risk-state.json（App 首頁預警卡讀這份），必要時用 Telegram 通知。
+on:
+  schedule:
+    # 以下皆為 UTC。涵蓋台北時間週一至週五 21:00 → 隔天 10:00（美股盤中、收盤，到台股開盤前後）
+    - cron: '*/15 13-23 * * 1-5'   # 台北 21:00–07:59（週一晚到週六早）
+    - cron: '*/15 0-1 * * 1-5'     # 台北 08:00–09:59（開盤前後）
+    - cron: '*/30 22-23 * * 0'     # 台北週一 06:00–07:59（週一開盤前）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只計算，不發佈、不通知'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: risk-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 讀回 data 分支上一次的通知狀態（冷卻時間、上次等級）；分支還不存在時跳過
+      - name: Load previous state from data branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .risk-data
+          cd .risk-data
+          git init -q
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin data 2>/dev/null; then
+            git checkout -q -B data FETCH_HEAD
+          else
+            echo "data 分支尚未建立，第一次發佈時會建立"
+          fi
+
+      - name: Run risk monitor
+        env:
+          DATA_DIR: .risk-data
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_URL: ${{ secrets.SHEET_URL }}
+          SHEET_SECRET: ${{ secrets.SHEET_SECRET }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            node .github/scripts/risk-monitor.mjs --dry-run
+          else
+            node .github/scripts/risk-monitor.mjs
+          fi
+
+      # 資料分支只保留最新一份快照（單一提交強制推送），歷史不會越長越大
+      - name: Publish snapshot to data branch
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          cd .risk-data
+          if [ ! -f risk-state.json ]; then echo "沒有輸出檔，略過發佈"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add risk-state.json risk-notify-state.json
+          tree=$(git write-tree)
+          commit=$(git commit-tree "$tree" -m "data: risk snapshot $(date -u +%Y-%m-%dT%H:%MZ)")
+          git push -q --force origin "$commit:refs/heads/data"
