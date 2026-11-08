@@ -63,12 +63,25 @@ async function fromYahoo(sym) {
       && bars.length && isoDay(m.regularMarketTime) > isoDay(bars.at(-1).ts)) {
     bars.push({ ts: m.regularMarketTime, c: m.regularMarketPrice });
   }
+  // 匯率類（如 TWD=X）的日線最後一根可能是過期的快照（實測 33.109，meta 即時價 32.765），
+  // 會讓「台幣急貶」誤判，所以改用 meta 的即時價覆蓋／補上最後一根
+  if (m?.instrumentType === 'CURRENCY' && Number.isFinite(m.regularMarketPrice) && m.regularMarketTime && bars.length) {
+    const d = isoDay(m.regularMarketTime), ld = isoDay(bars.at(-1).ts);
+    if (d === ld) bars[bars.length - 1] = { ts: m.regularMarketTime, c: m.regularMarketPrice };
+    else if (d > ld) bars.push({ ts: m.regularMarketTime, c: m.regularMarketPrice });
+  }
   return { bars, via: 'Yahoo' };
 }
 
+// Stooq 對資料中心 IP 常回 403（實測）；連續兩次被擋就整輪不再試，省掉每個代號白費一次請求
+let stooqBlocks = 0;
 async function fromStooq(sym, code) {
   if (!code) throw new Error('無對應代號');
-  const text = await http(`${base.stooq()}/q/d/l/?s=${encodeURIComponent(code)}&i=d`);
+  if (stooqBlocks >= 2) throw new Error('已略過（本輪連續被 403 封鎖）');
+  let text;
+  try {
+    text = await http(`${base.stooq()}/q/d/l/?s=${encodeURIComponent(code)}&i=d`, { retries: 0 });
+  } catch (e) { if (/HTTP 403/.test(e.message)) stooqBlocks++; throw e; }
   const rows = text.trim().split(/\r?\n/);
   if (!/^date,/i.test(rows[0] ?? '')) throw new Error('不是 CSV：' + text.slice(0, 40).replace(/\s+/g, ' '));
   const bars = rows.slice(1).map(l => l.split(','))
