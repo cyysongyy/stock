@@ -101,6 +101,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .usp-verdict .txt{font-size:14px;font-weight:800}
 .usp-verdict .sub{font-size:10px;color:var(--sub)}
 .usp-note{font-size:9px;color:var(--sub);margin-top:8px;line-height:1.5}
+/* 首頁市場資訊卡收合 */
+.cc-bar{display:flex;align-items:center;justify-content:space-between;margin:10px 14px -2px;font-size:11px;color:var(--sub);cursor:pointer;user-select:none}
+.cc-bar b{color:var(--blue);font-weight:700}
+.cc-wrap .usp-head{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.cc-wrap .usp-title::before{content:'▾';display:inline-block;width:14px;font-size:11px;color:var(--sub)}
+.cc-wrap .cc-sum{display:none;font-size:12px;font-weight:700}
+.cc-wrap.cc-off .usp-title::before{content:'▸'}
+.cc-wrap.cc-off .usp-card{padding-top:11px;padding-bottom:11px}
+.cc-wrap.cc-off .usp-card>*:not(.usp-head){display:none!important}
+.cc-wrap.cc-off .usp-head{margin-bottom:0}
+.cc-wrap.cc-off .usp-date{display:none}
+.cc-wrap.cc-off .cc-sum{display:block}
 /* 風險預警卡 */
 .rk-c1{border-color:#f5a62366}.rk-c2{border-color:#ff8c4288}.rk-c3{border-color:#ff4757aa}
 .rk-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
@@ -580,9 +592,10 @@ select option{background:var(--card2);color:var(--text)}
 
   <!-- Portfolio -->
   <div id="sec-portfolio" class="section active">
-    <div id="risk-wrap"></div>
-    <div id="usp-wrap"></div>
-    <div id="day-pred-wrap"></div>
+    <div class="cc-bar" onclick="ccToggleAll()"><span>🌐 市場資訊</span><b id="cc-all-txt">全部收合</b></div>
+    <div id="risk-wrap" class="cc-wrap" data-cc="risk"></div>
+    <div id="usp-wrap" class="cc-wrap" data-cc="usp"></div>
+    <div id="day-pred-wrap" class="cc-wrap" data-cc="dp"></div>
     <div id="overview-wrap"></div>
     <div id="holdings-wrap"></div>
   </div>
@@ -1627,6 +1640,7 @@ function showApp(name){
   updateSheetBadge();
   renderPortfolio(); // instant render with cached prices
   fetchLiveAndRender(); // background fetch
+  ccApply(); // 套用市場資訊卡的收合狀態
   loadUSPredict(); // 美股前日收盤 → 台股預測
   loadDayPredict(); // 今日台股預測（規則式，與 cli/predict.mjs 相同算法）
   loadRisk(); // 風險預警（伺服器端排程發佈的 risk-state.json）
@@ -2176,7 +2190,7 @@ async function loadUSPredict(force){
   const lateCache=!!cache?.data?.date&&cache.data.date<expectedUSClose(); // 收盤日落後，不能再用快取
   if(cache&&!force&&!lateCache&&Date.now()-cache.at<ttl){renderUSPredict(cache.data);return;}
   if(cache)renderUSPredict(cache.data,true); // 先顯示舊資料(標示更新中)再背景更新
-  else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
+  else wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0">載入美股收盤資料中…</div></div>';
   try{
     // 最多三個指數同時抓（與今日預測卡共用快取，不會重複打代理）
     const results=await mapLimit(USP_INDICES,3,async ix=>{
@@ -2207,7 +2221,7 @@ async function loadUSPredict(force){
   }catch(e){
     if(cache)renderUSPredict(cache.data,false,true,e.diag||[e.message]); // 更新失敗→顯示快取並標示，附上失敗診斷
     if(_uspRetry<3){_uspRetry++;setTimeout(()=>loadUSPredict(true),30000);} // 30秒後自動重試
-    if(!cache)wrap.innerHTML='<div class="usp-card"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadUSPredict(true)">重試</span>'+diagHTML(e.diag||[e.message],true)+'</div></div>';
+    if(!cache)wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadUSPredict(true)">重試</span>'+diagHTML(e.diag||[e.message],true)+'</div></div>';
   }
 }
 function renderUSPredict(d,updating,stale,failDiag){
@@ -2223,7 +2237,7 @@ function renderUSPredict(d,updating,stale,failDiag){
     return '<div class="usp-idx"><div class="nm">'+ix.nm+'</div><div class="chg '+c+'">'+t+'</div></div>';
   }).join('');
   wrap.innerHTML='<div class="usp-card">'
-    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+(d.fetchedAt?'・抓取 '+fmtHM(d.fetchedAt):'')+(d.src?'・來源：'+d.src:'')+badge+(late?' <span style="color:#f59e0b">尚未更新</span>':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div></div>'
+    +'<div class="usp-head"><div class="usp-title">🇺🇸 美股收盤 → 台股預測</div><div class="usp-date">'+(d.dateStr?d.dateStr+' 收盤':'')+(d.fetchedAt?'・抓取 '+fmtHM(d.fetchedAt):'')+(d.src?'・來源：'+d.src:'')+badge+(late?' <span style="color:#f59e0b">尚未更新</span>':'')+' <span style="cursor:pointer" onclick="loadUSPredict(true)" title="重新整理">↻</span></div>'+ccSum('<span class="'+v.cls+'">'+v.emo+' '+v.txt+'</span> <span class="tm-sub">'+(d.score>0?'+':'')+d.score.toFixed(2)+'</span>')+'</div>'
     +'<div class="usp-idx-row">'+cells+'</div>'
     +'<div class="usp-gauge"><div class="usp-marker" style="left:calc('+pos+'% - 1px)"></div></div>'
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--sub)"><span>偏空</span><span>中性</span><span>偏多</span></div>'
@@ -2273,6 +2287,29 @@ async function fetchOpenAPIPrices(codes){
   });
   return prices;
 }
+// ── 首頁市場資訊卡：點卡片標題列收合／展開，狀態記在本機（整台裝置共用，切換使用者不重設）──
+const CC_KEY='tw_collapse_v1',CC_IDS=['risk','usp','dp'];
+function ccLoad(){try{return JSON.parse(localStorage.getItem(CC_KEY)||'{}')||{};}catch(e){return{};}}
+function ccSave(st){try{localStorage.setItem(CC_KEY,JSON.stringify(st));}catch(e){}}
+function ccApply(){
+  const st=ccLoad();
+  document.querySelectorAll('.cc-wrap').forEach(w=>w.classList.toggle('cc-off',!!st[w.dataset.cc]));
+  const t=document.getElementById('cc-all-txt');
+  if(t)t.textContent=CC_IDS.every(k=>st[k])?'全部展開':'全部收合';
+}
+function ccToggleAll(){
+  const st=ccLoad(),allOff=CC_IDS.every(k=>st[k]);
+  CC_IDS.forEach(k=>{st[k]=allOff?0:1;});
+  ccSave(st);ccApply();
+}
+document.addEventListener('click',e=>{
+  const head=e.target.closest&&e.target.closest('.cc-wrap .usp-head');
+  if(!head||e.target.closest('a,[onclick]'))return; // 點重新整理、連結不觸發收合
+  const id=head.closest('.cc-wrap').dataset.cc,st=ccLoad();
+  st[id]=st[id]?0:1;ccSave(st);ccApply();
+});
+// 重新繪製後狀態由外層 class 決定；每張卡的標題列放一行摘要，收合時顯示
+const ccSum=h=>'<div class="cc-sum">'+h+'</div>';
 // ── 風險預警卡 ─────────────────────────────────────────────
 // 資料由伺服器端排程（GitHub Actions：.github/workflows/risk-monitor.yml）蒐集、評分後發佈到 data 分支，
 // 這裡只負責讀取與顯示（不經過 CORS 代理）。受影響的持股在手機本機比對，持股資料不會上傳。
@@ -2317,7 +2354,7 @@ async function loadRisk(force){
     const r=await fetchT(RISK_URL+'?t='+Math.floor(Date.now()/3e5),10000);
     if(r.status===404){
       if(cache)renderRisk(cache.data,false,'伺服器端還沒有新資料');
-      else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🛡️ 風險預警</div><div style="font-size:11px;color:var(--sub);padding:8px 0;line-height:1.6">尚未啟用伺服器端預警。到 GitHub → Actions → <b>Risk Monitor</b> → Run workflow 手動執行一次即可（詳見 README）。 <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重新檢查</span></div></div>';
+      else wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🛡️ 風險預警</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0;line-height:1.6">尚未啟用伺服器端預警。到 GitHub → Actions → <b>Risk Monitor</b> → Run workflow 手動執行一次即可（詳見 README）。 <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重新檢查</span></div></div>';
       return;
     }
     if(!r.ok)throw new Error('HTTP '+r.status);
@@ -2328,7 +2365,7 @@ async function loadRisk(force){
     riskNotify(data);
   }catch(e){
     if(cache)renderRisk(cache.data,false,'更新失敗：'+e.message);
-    else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🛡️ 風險預警</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得預警資料（'+_escH(e.message)+'） <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重試</span></div></div>';
+    else wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🛡️ 風險預警</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得預警資料（'+_escH(e.message)+'） <span style="color:var(--blue);cursor:pointer" onclick="loadRisk(true)">重試</span></div></div>';
   }finally{_riskBusy=false;}
 }
 function renderRisk(d,updating,note){
@@ -2346,7 +2383,7 @@ function renderRisk(d,updating,note){
   const links=(d.links||[]).filter(l=>_safeUrl(l.url)).map(l=>`<a href="${_safeUrl(l.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue);text-decoration:none">${_escH(l.label)}↗</a>`).join('　');
   const when=riskActiveNow()?'⚠️ 資料偏舊，排程可能沒有執行':'排程休息中（台北週一至週五 21:00 到隔天 10:00 才會更新）';
   wrap.innerHTML=`<div class="usp-card rk-c${lvl}">
-    <div class="usp-head"><div class="usp-title">🛡️ 風險預警${badge}</div><div class="usp-date">${fmtHM(Date.parse(d.asOf))}${updating?' · 更新中…':''} <span style="cursor:pointer" onclick="loadRisk(true)" title="重新整理">↻</span></div></div>
+    <div class="usp-head"><div class="usp-title">🛡️ 風險預警${badge}</div><div class="usp-date">${fmtHM(Date.parse(d.asOf))}${updating?' · 更新中…':''} <span style="cursor:pointer" onclick="loadRisk(true)" title="重新整理">↻</span></div>${ccSum(ok?`<b>${d.score}</b>/100`:'資料異常')}</div>
     ${ok?`<div class="rk-bar"><div class="rk-fill rk-lv${lvl}" style="width:${Math.min(100,d.score)}%"></div>${marks}</div>
       <div class="rk-score"><b>${d.score}</b>/100　<span class="tm-sub">${_escH(RISK_ACTION[lvl])}</span></div>`
       :`<div style="font-size:11px;color:var(--amber);padding:6px 0;line-height:1.6">預警資料來源異常（可用資料 ${Math.round((d.coverage||0)*100)}%），已暫停評分以免誤報。${d.lastOkAt?'上次正常：'+fmtHM(Date.parse(d.lastOkAt)):''}</div>`}
@@ -2422,7 +2459,7 @@ async function loadDayPredict(force){
   const lateCache=!!cache?.usDate&&cache.usDate<expectedUSClose();
   if(cache&&!force&&!lateCache&&cache.target===target&&Date.now()-cache.at<30*60*1000){renderDayPredict(cache);return;}
   if(cache&&cache.target===target)renderDayPredict(cache,true);
-  else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🧭 今日台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">計算中…</div></div>';
+  else wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🧭 今日台股預測</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0">計算中…</div></div>';
   _dpBusy=true;
   try{
     const syms=[...DP_US.map(x=>x[0]),...DP_ASIA,'^TWII','^VIX'];
@@ -2432,7 +2469,7 @@ async function loadDayPredict(force){
     const fc=dpForecast(d);
     if(!fc){
       if(cache)renderDayPredict(cache,false,true,dgs);
-      else wrap.innerHTML='<div class="usp-card"><div class="usp-title">🧭 今日台股預測</div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadDayPredict(true)">重試</span>'+diagHTML(dgs,true)+'</div></div>';
+      else wrap.innerHTML='<div class="usp-card"><div class="usp-head"><div class="usp-title">🧭 今日台股預測</div></div><div style="font-size:11px;color:var(--sub);padding:8px 0">暫時無法取得美股資料 <span style="color:var(--blue);cursor:pointer" onclick="loadDayPredict(true)">重試</span>'+diagHTML(dgs,true)+'</div></div>';
       return;
     }
     const usDate=DP_US.map(([s])=>d[s]?.date).filter(Boolean).sort().pop()||null;
@@ -2446,13 +2483,14 @@ function renderDayPredict(c,updating,stale,failDiag){
   const wrap=document.getElementById('day-pred-wrap');
   if(!wrap)return;
   const badge=updating?' <span style="color:var(--sub)">更新中…</span>':stale?' <span style="color:#f59e0b">快取</span>':'';
-  const head=`<div class="usp-head"><div class="usp-title">🧭 今日台股預測</div><div class="usp-date">${dpLabel(c.target)}${c.at?'・抓取 '+fmtHM(c.at):''}${c.srcs?'・來源：'+c.srcs:''}${badge} <span style="cursor:pointer" onclick="loadDayPredict(true)" title="重新整理">↻</span></div></div>`;
+  const head=`<div class="usp-head"><div class="usp-title">🧭 今日台股預測</div><div class="usp-date">${dpLabel(c.target)}${c.at?'・抓取 '+fmtHM(c.at):''}${c.srcs?'・來源：'+c.srcs:''}${badge} <span style="cursor:pointer" onclick="loadDayPredict(true)" title="重新整理">↻</span></div>__SUM__</div>`;
   const f=c.fc;
-  if(!f){wrap.innerHTML=`<div class="usp-card">${head}</div>`;return;}
+  if(!f){wrap.innerHTML=`<div class="usp-card">${head.replace('__SUM__','')}</div>`;return;}
   const cls=f.direction==='偏多'?'usp-up':f.direction==='偏空'?'usp-dn':'usp-flat';
   const emo=f.direction==='偏多'?'📈':f.direction==='偏空'?'📉':'➖';
   const sg=v=>v==null?'—':(v>0?'+':'')+v.toFixed(2)+'%';
-  wrap.innerHTML=`<div class="usp-card">${head}
+  const sumH=ccSum(`<span class="${cls}">${emo} ${f.direction}</span> <span class="tm-sub">${sg(f.expected)}</span>`);
+  wrap.innerHTML=`<div class="usp-card">${head.replace('__SUM__',sumH)}
     <div class="usp-verdict"><div class="txt ${cls}">${emo} ${f.direction}</div><div class="sub">預期 ${sg(f.expected)}</div></div>
     <div style="font-size:11px;color:var(--sub);margin-top:4px">開盤區間 ${sg(f.low)} ～ ${sg(f.high)}</div>
     <div class="usp-idx-row" style="margin-top:8px">
