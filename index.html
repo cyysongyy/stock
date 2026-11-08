@@ -400,6 +400,17 @@ select option{background:var(--card2);color:var(--text)}
 .alert-sec{margin-top:10px;padding-top:8px;border-top:1px solid var(--border)}
 .alert-sec-title{font-size:12px;font-weight:800;margin-bottom:4px;display:flex;justify-content:space-between;align-items:baseline}
 .alert-sec-title span{font-size:10px;color:var(--sub);font-weight:400}
+/* 買賣急迫性／即時預警：點標題收合（狀態存本機，重繪後保持） */
+.urg-board-title,.alert-sec-title{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.urg-board-title::before,.alert-sec-title::before{content:'▾';display:inline-block;width:14px;font-size:11px;color:var(--sub);font-weight:400;flex:none}
+.urg-board-title>b,.alert-sec-title>b{flex:1;font-weight:800}
+.ccu-sum{display:none;color:var(--text)!important;font-weight:700!important;font-size:11px!important}
+.ccu-off>.urg-board-title::before,.ccu-off>.alert-sec-title::before{content:'▸'}
+.ccu-off>.urg-board-title,.ccu-off>.alert-sec-title{margin-bottom:0}
+.ccu-off>.urg-board-title .ccu-hint,.ccu-off>.alert-sec-title .ccu-hint{display:none}
+.ccu-off>.urg-board-title .ccu-sum,.ccu-off>.alert-sec-title .ccu-sum{display:inline}
+.urg-board.ccu-off>:not(.urg-board-title):not(.alert-sec){display:none}
+.alert-sec.ccu-off>:not(.alert-sec-title){display:none}
 .alert-item{display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-radius:8px;cursor:pointer}
 .alert-item.lv-urgent{background:#00c85314}.alert-item.lv-warn{background:#ffa50210}
 .alert-ic{font-size:12px;line-height:1.5}
@@ -2310,6 +2321,9 @@ document.addEventListener('click',e=>{
 });
 // 重新繪製後狀態由外層 class 決定；每張卡的標題列放一行摘要，收合時顯示
 const ccSum=h=>'<div class="cc-sum">'+h+'</div>';
+// 買賣急迫性／即時預警：重繪（每次報價更新）時由這裡決定 class，點標題只切換 class 與存狀態
+const ccOff=k=>ccLoad()[k]?' ccu-off':'';
+function ccToggleEl(k,el){const st=ccLoad();st[k]=st[k]?0:1;ccSave(st);el.classList.toggle('ccu-off',!!st[k]);}
 // ── 風險預警卡 ─────────────────────────────────────────────
 // 資料由伺服器端排程（GitHub Actions：.github/workflows/risk-monitor.yml）蒐集、評分後發佈到 data 分支，
 // 這裡只負責讀取與顯示（不經過 CORS 代理）。受影響的持股在手機本機比對，持股資料不會上傳。
@@ -3478,7 +3492,7 @@ function _processAlerts(list){
 function alertsHTML(list){
   const alerts=collectAlerts(list);if(!alerts.length)return'';
   const feed=_alertFeed(),ic={buy:'🟢',sell:'🟠',risk:'🔻'},groups=groupAlerts(alerts);
-  return`<div class="alert-sec"><div class="alert-sec-title">🔔 即時預警<span>${groups.length} 檔・盤中出現時會跳提示${voiceOn()?'並念出來':''}</span></div>${groups.slice(0,8).map(a=>`
+  return`<div class="alert-sec${ccOff('alt')}"><div class="alert-sec-title" onclick="ccToggleEl('alt',this.parentNode)"><b>🔔 即時預警</b><span class="ccu-hint">${groups.length} 檔・盤中出現時會跳提示${voiceOn()?'並念出來':''}</span><span class="ccu-sum">${groups.length} 檔</span></div>${groups.slice(0,8).map(a=>`
     <div class="alert-item lv-${a.level}"${a.h?` onclick="openUrgencyDetail('${_hCode(a.h)}')"`:''}>
       <span class="alert-ic">${ic[a.side]||'🔔'}</span>
       <div class="alert-main"><div class="alert-t"><b>${a.h?_hCode(a.h)+' '+_escH(_klName(a.h,_hCode(a.h))!==_hCode(a.h)?_klName(a.h,_hCode(a.h)):''):a.code}</b></div>
@@ -3496,7 +3510,9 @@ function urgencyBoardHTML(list){
         ${urgencyMeterHTML(u.level)}
       </div>`;}).join('')
     :`<div class="urg-calm">${anyAnalyzed?'✓ 目前沒有需要立即買進或賣出的持股':'⏳ 買賣時機分析中…'}</div>`;
-  return`<div class="urg-board"><div class="urg-board-title">⚡ 買賣急迫性<span>依急迫程度排序・點擊看細節</span></div>${body}${alertsHTML(list)}</div>`;
+  const cnt={};items.forEach(x=>{cnt[x.u.label]=(cnt[x.u.label]||0)+1;});
+  const sum=Object.entries(cnt).map(([k,v])=>k+' '+v).join('・')||'無急迫訊號';
+  return`<div class="urg-board${ccOff('urg')}"><div class="urg-board-title" onclick="ccToggleEl('urg',this.parentNode)"><b>⚡ 買賣急迫性</b><span class="ccu-hint">依急迫程度排序・點擊看細節</span><span class="ccu-sum">${_escH(sum)}</span></div>${body}${alertsHTML(list)}</div>`;
 }
 // 止跌確認、回測、分批價、相對位置——首頁細節與分析頁卡片共用
 // sell=true 時是賣出訊號，不顯示止跌確認/回測/分批買進這些買進用的資訊
