@@ -109,12 +109,21 @@ npm run predict              # 等同 --save
 
 ---
 
+## 安全設計
+
+- **內容安全政策（CSP）**：`index.html` 與 `dividends.html` 的 `<meta http-equiv="Content-Security-Policy">` 只允許連到本 App 用到的網域（`connect-src`）。即使頁面被塞進惡意程式，也無法把 AI 金鑰、Sheet 密碼、持股送到其他網站。**新增資料來源時，要同步把網域加進 `connect-src`**，否則會被瀏覽器擋掉。
+- **不依賴外部 CDN 載入 Chart.js**：已放進 `vendor/chart.umd.js`（4.4.1）。OCR 引擎 Tesseract.js 固定在 5.1.1 並加上 SRI 完整性雜湊，只有匯入截圖時才載入。
+- **限制**：CSP 仍允許行內 script（程式裡有大量 `onclick`），所以它擋的是「資料外送」，不是「所有注入」；OCR 引擎執行時還會從 `cdn.jsdelivr.net` 下載 worker、核心與語言資料，這部分沒有 SRI。
+- 金鑰仍存在手機 localStorage；請在各 AI 服務後台設定用量上限。
+
+---
+
 ## 技術棧
 
 - 純 HTML / CSS / JavaScript（無框架、無建置步驟）
 - TWSE MIS API（台股即時報價）
 - Yahoo Finance API（歷史 K 線，透過 CORS proxy）
-- Chart.js 4.4.1（走勢圖）
+- Chart.js 4.4.1（走勢圖，隨 repo 提供 `vendor/chart.umd.js`）
 - Tesseract.js 5（OCR 圖片匯入）
 - Google Apps Script（Sheet 同步，需自行部署）
 - Google Apps Script 即時報價中繼（選用，選單「⚡ 即時報價加速」內有程式碼與部署步驟；iPhone 直連 TWSE MIS 常失敗時改由它代抓）

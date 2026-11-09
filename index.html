@@ -6,11 +6,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#111318">
+<!-- 內容安全政策：只允許連到本 App 用到的網域，就算頁面被塞進惡意程式，也送不出金鑰與持股。新增資料來源時要同步加在 connect-src -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net https://script.google.com https://script.googleusercontent.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://openapi.twse.com.tw https://www.twse.com.tw https://mis.twse.com.tw https://www.tpex.org.tw https://query1.finance.yahoo.com https://query2.finance.yahoo.com https://stooq.com https://quote.cnbc.com https://api.allorigins.win https://api.codetabs.com https://corsproxy.io https://raw.githubusercontent.com https://script.google.com https://script.googleusercontent.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://integrate.api.nvidia.com https://cdn.jsdelivr.net; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>台股投資 Dashboard</title>
 <!-- 不擋住畫面：持股與市值先顯示，Chart.js 下載完再補畫圓餅圖；OCR 引擎只在匯入截圖時才載入 -->
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" onload="window._onChartLoad&&window._onChartLoad()"></script>
+<script defer src="vendor/chart.umd.js" onload="window._onChartLoad&&window._onChartLoad()"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -4155,7 +4157,8 @@ function loadTesseract(){
   if(window.Tesseract)return Promise.resolve();
   if(!loadTesseract.p)loadTesseract.p=new Promise((res,rej)=>{
     const s=document.createElement('script');
-    s.src='https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+    s.src='https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js';
+    s.integrity='sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F';s.crossOrigin='anonymous'; // 固定版本＋完整性雜湊：檔案被動過手腳就不會執行
     s.onload=res;
     s.onerror=()=>{loadTesseract.p=null;s.remove();rej(new Error('OCR 引擎下載失敗，請檢查網路後再試'));};
     document.head.appendChild(s);
