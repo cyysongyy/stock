@@ -1209,6 +1209,8 @@ function saveAIKey(){
   showToast(k?(p?'🤖 '+aiProviderLabel(k)+' 已設定':'❓ Key 格式無法識別'):'AI Key 已清除');
   const btn=document.getElementById('ai-scan-btn');
   if(btn)btn.style.display=k?'':'none';
+  const roleBtn=document.getElementById('role-btn');
+  if(roleBtn)roleBtn.style.display=k?'':'none';
 }
 async function callAI(key,prompt){
   const p=detectAIProvider(key);
@@ -1373,9 +1375,89 @@ ${sigs.map(s=>`・${s.name}：${s.desc}（${s.type==='bull'?'🟢多':s.type==='
   try{
     const text=await callAI(key,prompt);
     const html=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
-    document.getElementById('ai-result').innerHTML='<div style="font-size:13px;line-height:1.9;color:var(--text)">'+html+'</div><div style="font-size:10px;color:var(--sub);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">由 '+providerName+' 生成 · ⚠️ 僅供參考，不構成投資建議</div>';
+    document.getElementById('ai-result').innerHTML='<div style="font-size:var(--ai-fs,13px);line-height:1.9;color:var(--text)">'+html+'</div><div style="font-size:10px;color:var(--sub);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">由 '+providerName+' 生成 · ⚠️ 僅供參考，不構成投資建議</div>';
   }catch(e){
     document.getElementById('ai-result').innerHTML='<div style="color:var(--red);font-size:12px">分析失敗：'+e.message+'</div>';
+  }
+}
+
+// ── AI 結果字體大小（A−/A＋，記在本機）──
+function applyAIFont(){
+  let n=parseInt(localStorage.getItem('tw_ai_fs'),10);if(!(n>=12&&n<=24))n=13;
+  document.documentElement.style.setProperty('--ai-fs',n+'px');return n;
+}
+function setAIFont(d){
+  const n=Math.max(12,Math.min(24,applyAIFont()+d*1));
+  localStorage.setItem('tw_ai_fs',String(n));applyAIFont();
+}
+applyAIFont();
+// ── 💼 理財＋AI 學習 雙角色分析 ───────────────────────────────
+// 只把「比例與狀態」送給 AI，不送股數、成本與金額。理財角色只做分析，不給買賣建議。
+function portfolioDigest(){
+  const rows=holdings.map(h=>{
+    const live=_livePrice(h);
+    const hasLive=live!=null&&live>0;
+    const px=hasLive?live:+h.cost;
+    const qty=+h.qty||0;
+    return{code:_hCode(h),cat:h.cat||'未分類',val:qty*(+px||0),cost:qty*(+h.cost||0),hasLive,
+      hasTarget:+h.target>0,hasStop:+h.stop>0,signal:h.signalAlert||''};
+  }).filter(r=>r.val>0);
+  const total=rows.reduce((a,r)=>a+r.val,0);
+  const totalCost=rows.reduce((a,r)=>a+r.cost,0);
+  const r1=x=>Math.round(x*10)/10;
+  const allLive=rows.length>0&&rows.every(r=>r.hasLive);
+  const weights=rows.map(r=>({code:r.code,cat:r.cat,weightPct:r1(r.val/total*100),
+    returnPct:(r.hasLive&&r.cost>0)?r1((r.val/r.cost-1)*100):null})).sort((a,b)=>b.weightPct-a.weightPct);
+  const byCategory={};
+  rows.forEach(r=>{byCategory[r.cat]=r1((byCategory[r.cat]||0)+r.val/total*100);});
+  return{positions:rows.length,basis:allLive?'即時市值比重':'市值比重（沒有報價的持股以成本代替）',
+    weights,byCategory,totalReturnPct:(allLive&&totalCost>0)?r1((total/totalCost-1)*100):null,
+    withTarget:rows.filter(r=>r.hasTarget).length,withStop:rows.filter(r=>r.hasStop).length,
+    signals:rows.filter(r=>r.signal).map(r=>({code:r.code,signal:r.signal}))};
+}
+function openRoleMeeting(){
+  const key=localStorage.getItem(KEY_AI);
+  if(!key){showToast('請先設定 AI API Key');openAIKeyModal();return;}
+  if(!holdings.length){showToast('目前沒有持股可分析');return;}
+  const d=portfolioDigest();
+  document.getElementById('ai-result-title').textContent='💼 理財＋AI 學習 雙角色分析';
+  document.getElementById('ai-result').innerHTML=
+    '<div style="font-size:11px;color:var(--sub);line-height:1.7;margin-bottom:8px">只會把「比例與狀態」送給 AI（共 '+d.positions+' 檔），不送股數、成本與金額。</div>'
+    +'<textarea id="role-topic" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text);font-size:var(--ai-fs,13px)">檢視目前持股結構，哪些地方值得多留意？</textarea>'
+    +'<button class="btn-save" style="width:100%;margin:8px 0" onclick="runRoleMeeting()">開始分析</button>'
+    +'<div id="role-out"></div>';
+  document.getElementById('modal-ai-result').classList.add('open');
+}
+async function runRoleMeeting(){
+  const key=localStorage.getItem(KEY_AI);
+  if(!key){showToast('請先設定 AI API Key');return;}
+  const out=document.getElementById('role-out');
+  const topic=(document.getElementById('role-topic').value||'').trim()||'檢視目前持股結構，哪些地方值得多留意？';
+  const providerName=aiProviderLabel(key);
+  const digest=JSON.stringify(portfolioDigest());
+  const rules='輸出要求：使用繁體中文；150 字以內；不使用 markdown 符號；不要編造資料中沒有的數字；不提供買進或賣出的建議，只做分析。';
+  const base='這是使用者個人的投資討論，與校務無關。\n議題：'+topic+'\n持股摘要（只有比例與狀態，沒有金額）：'+digest+'\n\n';
+  const turns=[];
+  const fmt=s=>_escH(s).replace(/\n/g,'<br>');
+  const paint=(note)=>{
+    out.innerHTML=turns.map(t=>'<div style="border-left:4px solid '+t.c+';padding:6px 10px;margin:8px 0"><div style="font-size:11px;font-weight:700;color:'+t.c+'">'+t.who+'</div><div style="font-size:var(--ai-fs,13px);line-height:1.8;color:var(--text)">'+fmt(t.text)+'</div></div>').join('')
+      +(note?'<div style="text-align:center;padding:12px"><div class="spinner"></div><p style="color:var(--sub);font-size:12px;margin-top:8px">'+note+'</p></div>':'')
+      +(note?'':'<div style="font-size:10px;color:var(--sub);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">由 '+providerName+' 生成 · ⚠️ 僅供參考，不構成投資建議</div>');
+  };
+  try{
+    paint('理財 分析中…');
+    const a=await callAI(key,'你是「理財」角色。立場：先算再花，重視集中度、停損與風險管理，只做分析、不構成投資建議。\n'+base+'請從理財角度說出三個重點。\n'+rules);
+    turns.push({who:'💰 理財',c:'#f5a623',text:a.trim()});
+    paint('AI 學習 回應中…');
+    const b=await callAI(key,'你是「AI 學習」角色。立場：做中學，重視可實作、可驗證的學習方法，把問題轉成可以動手練習的任務。\n'+base+'理財角色剛才說：\n'+a+'\n\n請回應理財的觀點，並提出 2 到 3 個可以動手做的學習練習。\n'+rules);
+    turns.push({who:'🤖 AI 學習',c:'#7c3aed',text:b.trim()});
+    paint('主持人彙整中…');
+    const s=await callAI(key,'你是會議主持人，請整理以下兩位的討論，使用繁體中文、純文字、300 字以內，依序輸出：\n【共識】\n【分歧】\n【需要你拍板】\n你只整理，不替使用者做決定，也不提供買賣建議。\n\n議題：'+topic+'\n\n理財：'+a+'\n\nAI 學習：'+b);
+    turns.push({who:'🎙 主持人',c:'#4d9eff',text:s.trim()});
+    paint('');
+  }catch(e){
+    paint('');
+    out.innerHTML+='<div style="color:var(--red);font-size:12px;margin-top:8px">分析失敗：'+_escH(e.message||String(e))+'</div>';
   }
 }
 
@@ -2846,6 +2928,7 @@ async function renderPortfolio(liveDataMap){
         <div class="ov-btn" onclick="fetchLiveAndRender(true)" id="refresh-btn"><span class="ic">🔄</span><span class="lbl">刷新<span id="refresh-countdown" style="font-size:9px;color:#4d9eff;margin-left:2px"></span></span><span class="sub">即時更新</span></div>
         <div class="ov-btn" onclick="exportData()"><span class="ic">📤</span><span class="lbl">匯出</span><span class="sub">報表分享</span></div>
         <div class="ov-btn" id="ai-scan-btn" onclick="scanAllWithAI()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}"><span class="ic">🤖</span><span class="lbl">AI 掃描庫存</span><span class="sub">智慧選股</span></div>
+        <div class="ov-btn" id="role-btn" onclick="openRoleMeeting()" style="${localStorage.getItem(KEY_AI)?'':'display:none'}"><span class="ic">💼</span><span class="lbl">雙角色</span><span class="sub">理財＋AI</span></div>
         <div class="ov-btn primary" onclick="openAddModal()"><span class="ic">＋</span><span class="lbl">新增持股</span><span class="sub">快速建倉</span></div>
       </div>
     </div>
@@ -4056,8 +4139,10 @@ init();
 <div class="modal-overlay" id="modal-ai-result" onclick="if(event.target===this)closeModal('modal-ai-result')">
   <div class="modal" style="max-height:85vh">
     <h3 id="ai-result-title">🤖 AI 深度分析</h3>
-    <div id="ai-result" style="font-size:13px;line-height:1.8;color:var(--text);max-height:60vh;overflow-y:auto"></div>
+    <div id="ai-result" style="font-size:var(--ai-fs,13px);line-height:1.8;color:var(--text);max-height:60vh;overflow-y:auto"></div>
     <div class="modal-btns" style="margin-top:12px">
+      <button class="btn-cancel" onclick="setAIFont(-1)" title="縮小字體" style="flex:0 0 auto;padding:0 14px">A−</button>
+      <button class="btn-cancel" onclick="setAIFont(1)" title="放大字體" style="flex:0 0 auto;padding:0 14px;font-size:17px">A＋</button>
       <button class="btn-cancel" onclick="closeModal('modal-ai-result')">關閉</button>
     </div>
   </div>
