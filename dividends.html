@@ -32,6 +32,17 @@ button{cursor:pointer;background:#243044}button.pri{background:var(--acc);color:
   <div><b id="k-yield">0%</b><span>對成本殖利率</span></div>
 </div>
 
+<div class="card" id="rem-card">
+  <h2>🔔 除權息提醒（持股，30 天內）</h2>
+  <div id="rem-list" class="mut">載入中…</div>
+  <div class="row">
+    <button onclick="enableNotify()">🔔 開啟網頁通知</button>
+    <button onclick="exportICS()">📅 匯出到手機行事曆 (.ics)</button>
+  </div>
+  <div class="mut" id="rem-msg"></div>
+  <div class="mut">行事曆檔會在除權息日前一天早上 9 點提醒；iPhone 網頁通知有限制，建議用行事曆提醒。預告資料來自 TWSE，僅供參考。</div>
+</div>
+
 <div class="card">
   <h2>📅 12 個月現金流（依發放月份）</h2>
   <div class="bars" id="bars"></div>
@@ -67,6 +78,27 @@ button{cursor:pointer;background:#243044}button.pri{background:var(--acc);color:
     <button onclick="simulate()">計算</button>
   </div>
   <div id="sim" class="mut"></div>
+</div>
+
+<div class="card" id="dca-card">
+  <h2>🧮 定期定額試算</h2>
+  <div class="row">
+    <label class="mut">套用持股 <select id="d-pick" onchange="dcaPick()"><option value="">（手動輸入）</option></select></label>
+  </div>
+  <div class="row">
+    <label class="mut">每月投入 <input id="d-amt" type="number" value="10000" style="width:100px"></label>
+    <label class="mut">年數 <input id="d-y" type="number" value="10" style="width:70px"></label>
+    <label class="mut">價格成長%/年 <input id="d-p" type="number" step="0.1" value="4" style="width:70px"></label>
+    <label class="mut">殖利率% <input id="d-yd" type="number" step="0.1" value="4" style="width:70px"></label>
+  </div>
+  <div class="row">
+    <label class="mut">手續費折數 <input id="d-fd" type="number" step="0.1" value="6" style="width:70px"></label>
+    <label class="mut">目標月領息 <input id="d-goal" type="number" value="10000" style="width:100px"></label>
+    <label class="mut"><input type="checkbox" id="d-re" checked> 股利再投入</label>
+    <button class="pri" onclick="dcaCalc()">計算</button>
+  </div>
+  <div id="d-out" class="mut"></div>
+  <table id="d-tbl" style="display:none"><thead><tr><th>年</th><th>累積投入</th><th>期末市值</th><th>該年股利</th></tr></thead><tbody></tbody></table>
 </div>
 
 <div class="card" id="nohold" style="display:none">
@@ -135,6 +167,7 @@ function renderUpcoming(){
   const mine=new Set(holdings.map(h=>h.code));
   const today=new Date().toISOString().slice(0,10);
   const rows=upcoming.filter(x=>x.date>=today).sort((a,b)=>(mine.has(b.code)-mine.has(a.code))||a.date.localeCompare(b.date)).slice(0,40);
+  renderReminders();
   $('up').tBodies[0].innerHTML=rows.map(x=>`<tr><td>${x.date.slice(5)}</td><td>${mine.has(x.code)?'<span class="tag mine">★</span> ':''}${x.code} ${x.name||''}</td><td>${x.type||''}</td><td>${x.cash??'—'}</td>
     <td>${mine.has(x.code)?`<button onclick="adopt('${x.code}','${x.date}',${x.cash??'null'})">採用</button>`:''}</td></tr>`).join('')||'<tr><td colspan=5 class="mut">無資料</td></tr>';
 }
@@ -195,8 +228,128 @@ function simulate(){
   $('sim').innerHTML=`${y} 年後：市值約 <b>${fmt(value)}</b>，第 ${y} 年股利約 <b>${fmt(div)}</b>`+(re?'（股利全數再投入）':`，累積領息 <b>${fmt(cash)}</b>`)+'<br>＊簡化模型：未計稅、手續費與配股，結果僅供參考。';
 }
 
-loadHoldings();render();
-loadYields().then(render);
+/* ================= 除權息提醒 ================= */
+const esc=t=>String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function todayLocal(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function daysUntil(iso){const a=iso.split('-').map(Number),b=todayLocal().split('-').map(Number);return Math.round((Date.UTC(a[0],a[1]-1,a[2])-Date.UTC(b[0],b[1]-1,b[2]))/864e5)}
+/* 持股相關的未來事件：TWSE 預告 + 手動股利紀錄（預告載入失敗時仍可用） */
+function reminderEvents(maxDays){
+  const mine=new Map(holdings.map(h=>[h.code,h])),seen=new Set(),ev=[];
+  const push=(code,name,date,type,cash)=>{
+    if(!mine.has(code)||!date)return;
+    const d=daysUntil(date); if(d<0||d>maxDays)return;
+    const k=code+'|'+date+'|'+type; if(seen.has(k))return; seen.add(k);
+    const h=mine.get(code);
+    ev.push({code,name:name||h.name||'',date,days:d,type,cash,amt:cash!=null?net(cash*h.qty):null});
+  };
+  upcoming.forEach(x=>push(x.code,x.name,x.date,x.type||'除權息',x.cash));
+  recs.forEach(r=>{push(r.code,'',r.ex,'除息',r.dps);push(r.code,'','pay'in r?r.pay:'','發放',r.dps)});
+  return ev.sort((a,b)=>a.date.localeCompare(b.date));
+}
+function daysLabel(d){return d===0?'今天':d===1?'明天':d+' 天後'}
+function renderReminders(){
+  const el=$('rem-list'); if(!el)return;
+  const ev=reminderEvents(30);
+  el.innerHTML=ev.length?ev.map(e=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+    <span class="tag ${e.days<=3?'mine':''}" style="min-width:56px;text-align:center">${daysLabel(e.days)}</span>
+    <span style="flex:1;color:var(--tx)">${esc(e.code)} ${esc(e.name)} <span class="mut">${esc(e.type)} ${e.date.slice(5)}</span></span>
+    <span>${e.cash!=null?'每股 '+esc(e.cash)+(e.amt!=null?' ≈ '+fmt(e.amt):''):'—'}</span></div>`).join('')
+    :'30 天內沒有持股的除權息預告。預告表若載入失敗，可在下方手動新增股利紀錄。';
+  notifyIfDue(ev);
+}
+function notifyIfDue(ev){
+  if(!('Notification'in window)||Notification.permission!=='granted')return;
+  const key='div_notified',t=todayLocal();
+  let last='';try{last=localStorage.getItem(key)||''}catch(e){}
+  if(last===t)return;
+  const soon=ev.filter(e=>e.days<=3&&e.type!=='發放');
+  if(!soon.length)return;
+  try{new Notification('💰 除權息提醒',{body:soon.slice(0,5).map(e=>`${daysLabel(e.days)} ${e.code} ${e.name}${e.cash!=null?' 每股'+e.cash:''}`).join('\n')});localStorage.setItem(key,t)}catch(e){}
+}
+async function enableNotify(){
+  const m=$('rem-msg');
+  if(!('Notification'in window)){m.textContent='這個瀏覽器不支援網頁通知，請改用行事曆匯出';return}
+  const r=await Notification.requestPermission();
+  m.textContent=r==='granted'?'已開啟：開啟本頁時，若有 3 天內的除息會跳通知（每天最多一次）':'未允許通知，請改用行事曆匯出';
+  if(r==='granted')renderReminders();
+}
+function icsEsc(t){return String(t).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\r?\n/g,'\\n')}
+function buildICS(ev){
+  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//tw-stock-dashboard//dividends//ZH','CALSCALE:GREGORIAN'];
+  const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
+  ev.forEach(e=>{
+    const d=e.date.replace(/-/g,'');
+    L.push('BEGIN:VEVENT','UID:'+d+'-'+e.code+'-'+e.type+'@tw-stock-dashboard','DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+d,
+      'SUMMARY:'+icsEsc(`${e.type} ${e.code} ${e.name}`.trim()),
+      'DESCRIPTION:'+icsEsc(e.cash!=null?`每股 ${e.cash}`+(e.amt!=null?`，預估 ${fmt(e.amt)} 元`:''):'每股股利未定'),
+      'BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(`明天 ${e.type}：${e.code} ${e.name}`.trim()),'TRIGGER:-PT15H','END:VALARM','END:VEVENT');
+  });
+  L.push('END:VCALENDAR');return L.join('\r\n')+'\r\n';
+}
+function exportICS(){
+  const ev=reminderEvents(180),m=$('rem-msg');
+  if(!ev.length){m.textContent='沒有可匯出的持股事件（需要有預告資料或手動股利紀錄）';return}
+  const blob=new Blob([buildICS(ev)],{type:'text/calendar;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='exdiv-reminders.ics';
+  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500);
+  m.textContent=`已匯出 ${ev.length} 筆事件，用行事曆 App 開啟即可加入`;
+}
+
+/* ================= 定期定額試算 ================= */
+function dcaFillPicker(){
+  const sel=$('d-pick');if(!sel)return;const cur=sel.value;
+  sel.innerHTML='<option value="">（手動輸入）</option>'+holdings.map(h=>`<option value="${esc(h.code)}">${esc(h.code)} ${esc(h.name||'')}</option>`).join('');
+  sel.value=cur;
+}
+function dcaPick(){
+  const c=$('d-pick').value;if(!c)return;
+  if(yields[c])$('d-yd').value=(yields[c]*100).toFixed(2);
+  else $('d-out').textContent='查不到這檔的殖利率，請手動輸入';
+}
+/* 月複利模型：每月投入（扣手續費）→ 價格月成長 → 股利按月（殖利率/12）發放 */
+function dcaRun(o){
+  const gp=Math.pow(1+o.p,1/12)-1,months=o.years*12;
+  const feeRate=0.001425*o.disc/10,fee=Math.max(1,o.amt*feeRate);
+  let value=0,invested=0,cumDiv=0,yrDiv=0,goalYear=null;const cf=[],rows=[];
+  for(let m=1;m<=months;m++){
+    value+=o.amt-fee;invested+=o.amt;
+    const div=value*o.yd/12;yrDiv+=div;
+    if(o.re)value+=div;else cumDiv+=div;
+    cf.push(-o.amt+(o.re?0:div));
+    value*=1+gp;
+    if(m%12===0){
+      const y=m/12;rows.push({y,invested,value,div:yrDiv});
+      if(goalYear===null&&o.goal>0&&yrDiv/12>=o.goal)goalYear=y;
+      yrDiv=0;
+    }
+  }
+  const finalValue=value,total=finalValue+cumDiv;
+  // 年化報酬率：月現金流（投入為負、未再投入的股利為正）加期末市值，以二分法解月 IRR
+  let irr=null;
+  if(months>0&&finalValue>0){
+    const npv=r=>{let v=finalValue/Math.pow(1+r,months);for(let i=0;i<cf.length;i++)v+=cf[i]/Math.pow(1+r,i);return v};
+    let lo=-0.05,hi=0.5;
+    if(npv(lo)>0&&npv(hi)<0){for(let k=0;k<100;k++){const mid=(lo+hi)/2;(npv(mid)>0?lo=mid:hi=mid)}irr=Math.pow(1+(lo+hi)/2,12)-1}
+  }
+  return{invested,finalValue,cumDiv,total,rows,fee,irr,goalYear};
+}
+function dcaCalc(){
+  const o={amt:+$('d-amt').value,years:Math.floor(+$('d-y').value),p:+$('d-p').value/100,yd:+$('d-yd').value/100,
+    disc:+$('d-fd').value,goal:+$('d-goal').value,re:$('d-re').checked};
+  const out=$('d-out'),tb=$('d-tbl');
+  if(!(o.amt>0)||!(o.years>=1&&o.years<=60)||!(o.yd>=0)||!(o.disc>=0)||o.p<=-1){out.textContent='請檢查輸入：每月投入需大於 0，年數 1～60，殖利率不可為負';tb.style.display='none';return}
+  const r=dcaRun(o),gain=r.total-r.invested;
+  out.innerHTML=`每月投入 <b>${fmt(o.amt)}</b>，${o.years} 年共投入 <b>${fmt(r.invested)}</b>（手續費每月約 ${r.fee.toFixed(1)}）<br>`
+   +`期末市值約 <b>${fmt(r.finalValue)}</b>`+(o.re?'（股利已再投入）':`，另累積領息 <b>${fmt(r.cumDiv)}</b>`)+`<br>`
+   +`總資產 <b style="color:${gain>=0?'var(--red)':'var(--grn)'}">${fmt(r.total)}</b>，總報酬 ${fmt(gain)}（${(gain/r.invested*100).toFixed(1)}%）`+(r.irr!=null?`，年化約 ${(r.irr*100).toFixed(1)}%`:'')+`<br>`
+   +(o.goal>0?(r.goalYear?`🎯 約第 <b>${r.goalYear}</b> 年起，月領息可達 ${fmt(o.goal)}`:`🎯 ${o.years} 年內月領息達不到 ${fmt(o.goal)}，可提高每月投入或年數`):'')
+   +`<br>＊簡化模型：假設殖利率與價格成長率固定、股利按月發放、未計股利所得稅與補充保費，實際會有落差。`;
+  tb.tBodies[0].innerHTML=r.rows.map(x=>`<tr><td>${x.y}</td><td>${fmt(x.invested)}</td><td>${fmt(x.value)}</td><td>${fmt(x.div)}</td></tr>`).join('');
+  tb.style.display='';
+}
+
+loadHoldings();dcaFillPicker();render();
+loadYields().then(()=>{dcaFillPicker();render()});
 loadUpcoming();
 $('nhi').onchange=render;
 </script>
