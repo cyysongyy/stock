@@ -1,0 +1,329 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-28T03:44:25.743Z",
+  "asOf": "2026-11-28T03:44:25.743Z",
+  "status": "ok",
+  "expectedUSClose": "2026-11-27",
+  "score": 0,
+  "level": {
+    "id": "normal",
+    "label": "正常",
+    "rank": 0
+  },
+  "thresholds": [
+    {
+      "id": "watch",
+      "label": "注意",
+      "minScore": 25
+    },
+    {
+      "id": "warn",
+      "label": "警戒",
+      "minScore": 50
+    },
+    {
+      "id": "danger",
+      "label": "危險",
+      "minScore": 75
+    }
+  ],
+  "triggered": [],
+  "skipped": [],
+  "coverage": 1,
+  "taiex": {
+    "expected": 2.92,
+    "low": -1.62,
+    "high": 7.46,
+    "us": 2.95,
+    "asia": 2.85,
+    "basis": "美股 60%／亞股 30%，區間取加權指數近 10 日波動"
+  },
+  "factors": {
+    "^GSPC": {
+      "name": "S&P 500",
+      "group": "us",
+      "last": 7297.490234375,
+      "chg1d": 1.5970202713969834,
+      "chg5d": 1.6954157905838965,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^DJI": {
+      "name": "道瓊",
+      "group": "us",
+      "last": 50774.94140625,
+      "chg1d": 1.179667988263257,
+      "chg5d": 3.4174813330132827,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^IXIC": {
+      "name": "那斯達克",
+      "group": "us",
+      "last": 24129.5,
+      "chg1d": 2.3051971980625923,
+      "chg5d": 1.0481958752346405,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^SOX": {
+      "name": "費城半導體",
+      "group": "us",
+      "last": 9186.7060546875,
+      "chg1d": 4.69347301979187,
+      "chg5d": -2.473679457977172,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^TNX": {
+      "name": "美國 10 年債殖利率",
+      "group": "macro",
+      "last": 4.935999870300293,
+      "chg1d": 1.8151778013420488,
+      "chg5d": -2.2961238009697578,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^VIX": {
+      "name": "VIX 恐慌指數",
+      "group": "us",
+      "last": 23.809999465942383,
+      "chg1d": -11.156715881481908,
+      "chg5d": -33.65840102853338,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "NVDA": {
+      "name": "輝達",
+      "group": "us",
+      "last": 150.49000549316406,
+      "chg1d": 0.7970545325399034,
+      "chg5d": 3.0894710903010316,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "TSM": {
+      "name": "台積電 ADR",
+      "group": "us",
+      "last": 353.3399963378906,
+      "chg1d": 3.2131799140241175,
+      "chg5d": 0.3550228671650219,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "DX-Y.NYB": {
+      "name": "美元指數",
+      "group": "macro",
+      "last": 104.01399993896484,
+      "chg1d": 0.33182384112608015,
+      "chg5d": 0.1097193565079432,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "TWD=X": {
+      "name": "美元/台幣",
+      "group": "macro",
+      "last": 32.979,
+      "chg1d": -0.6327372962095456,
+      "chg5d": -0.14321472603523183,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "CL=F": {
+      "name": "原油期貨",
+      "group": "macro",
+      "last": 83.08000183105469,
+      "chg1d": -0.717015382329035,
+      "chg5d": -0.15622792314418713,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "ES=F": {
+      "name": "S&P 500 期貨",
+      "group": "macro",
+      "last": 7308.25,
+      "chg1d": 1.5634228537678492,
+      "chg5d": 1.5422557226718538,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "NQ=F": {
+      "name": "那斯達克期貨",
+      "group": "macro",
+      "last": 26765,
+      "chg1d": 2.546910470206224,
+      "chg5d": 0.6193550812492364,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^N225": {
+      "name": "日經 225",
+      "group": "asia",
+      "last": 58711.109375,
+      "chg1d": 2.1077685577608642,
+      "chg5d": -1.2332598093879779,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^KS11": {
+      "name": "韓國綜合",
+      "group": "asia",
+      "last": 4915.68017578125,
+      "chg1d": 4.340078589982047,
+      "chg5d": 0.938821165070699,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^HSI": {
+      "name": "恆生指數",
+      "group": "asia",
+      "last": 22694.76953125,
+      "chg1d": 2.1050577219324538,
+      "chg5d": 1.267106663308446,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "^TWII": {
+      "name": "台灣加權指數",
+      "group": "tw",
+      "last": 39308.078125,
+      "chg1d": 0.3991374520433932,
+      "chg5d": 9.088232430905363,
+      "date": "2026-11-27",
+      "src": "Yahoo",
+      "stale": false
+    },
+    "_usWeighted": {
+      "name": "美股加權指標",
+      "group": "virtual",
+      "chg1d": 2.9500427599512813,
+      "last": 2.9500427599512813,
+      "date": null,
+      "src": "計算",
+      "stale": false,
+      "coverage": 1
+    }
+  },
+  "exposure": [
+    {
+      "id": "semi",
+      "label": "半導體／電子權值股",
+      "codes": [
+        "2330",
+        "2454",
+        "2303",
+        "3711",
+        "3034",
+        "2379",
+        "3443",
+        "3661",
+        "2308",
+        "2382",
+        "3231",
+        "2317"
+      ],
+      "nameRegex": "台積|聯發科|聯電|日月光|半導體|晶圓|廣達|緯創|鴻海",
+      "factors": [
+        "^SOX",
+        "TSM",
+        "NVDA",
+        "^IXIC",
+        "NQ=F",
+        "usw"
+      ]
+    },
+    {
+      "id": "nasdaq",
+      "label": "追蹤那斯達克／美股科技的 ETF",
+      "nameRegex": "那斯達克|納斯達克|NASDAQ|美國科技|科技",
+      "factors": [
+        "^IXIC",
+        "NQ=F",
+        "nvda",
+        "usw"
+      ]
+    },
+    {
+      "id": "sp500",
+      "label": "追蹤 S&P 500／美股大盤的 ETF",
+      "nameRegex": "標普|S&P|美國500|美國大型|美股",
+      "factors": [
+        "^GSPC",
+        "ES=F",
+        "usw"
+      ]
+    },
+    {
+      "id": "soxetf",
+      "label": "費城半導體相關 ETF",
+      "nameRegex": "費城半導體|費半",
+      "factors": [
+        "^SOX",
+        "TSM",
+        "NVDA"
+      ]
+    },
+    {
+      "id": "twbroad",
+      "label": "台股大盤型 ETF",
+      "codes": [
+        "0050",
+        "0056",
+        "006208",
+        "00878",
+        "00919",
+        "00929"
+      ],
+      "nameRegex": "台灣50|台灣加權|高股息|台灣領袖",
+      "factors": [
+        "^TWII",
+        "^SOX",
+        "usw",
+        "twd"
+      ]
+    },
+    {
+      "id": "default",
+      "label": "一般台股",
+      "default": true,
+      "factors": [
+        "^TWII",
+        "usw",
+        "twd"
+      ]
+    }
+  ],
+  "lastOkAt": "2026-11-28T03:44:25.743Z",
+  "staleAfterMinutes": 120,
+  "links": [
+    {
+      "label": "CNBC 市場",
+      "url": "https://www.cnbc.com/markets/"
+    },
+    {
+      "label": "Yahoo 財經",
+      "url": "https://finance.yahoo.com/"
+    },
+    {
+      "label": "台灣證券交易所",
+      "url": "https://www.twse.com.tw/zh/"
+    }
+  ],
+  "disclaimer": "預警依規則與歷史相關性推估，不保證準確，僅供參考，非投資建議。"
+}
